@@ -92,15 +92,15 @@
 ### Auto-Run Allowed (In-Project)
 // turbo-all
 - `bun install` / `bun add <package>`
-- `bun run dev` / `bun run build` (frontend only)
+- `bun run dev` / `bun run build`
+- `bun run tauri dev` / `bun run tauri build`
+- `bun test` / `cargo test` / `cargo check`
 - File creation, editing, deletion within project
 - `bunx` commands for scaffolding/tooling
 
 ### Permission Required (Ask First)
 | Action | Reason |
 |--------|--------|
-| `cargo build` / `cargo check` | Rust compilation |
-| `bun run tauri dev` / `bun run tauri build` | Full app compilation |
 | Any file access **outside** project | Security boundary |
 
 ---
