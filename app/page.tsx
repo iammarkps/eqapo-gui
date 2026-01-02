@@ -21,6 +21,16 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { open } from '@tauri-apps/plugin-dialog';
 
+/**
+ * Render the main AntigravityEQ application UI and wire controls to equalizer state and actions.
+ *
+ * Provides the full page layout including header (file menu, profile selector, EQ toggle, sync indicator),
+ * error display, audio status, preamp control, EQ graph and peak meter, parametric band editors, and footer.
+ * Connects UI events to the equalizer hook for band/preamp updates, debounced applies, profile import/export,
+ * config path selection, and EQ toggling.
+ *
+ * @returns The Home page's React element representing the complete AntigravityEQ interface.
+ */
 export default function Home() {
     const {
         bands,

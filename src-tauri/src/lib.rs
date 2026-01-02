@@ -87,10 +87,34 @@ pub struct AppSettings {
     pub eq_enabled: bool,
 }
 
+/// Provides the default value for AppSettings.eq_enabled.
+///
+/// Returns `true` when the EQ should be enabled by default.
+///
+/// # Examples
+///
+/// ```
+/// assert!(default_eq_enabled());
+/// ```
 fn default_eq_enabled() -> bool {
     true
 }
 
+/// Provides the default set of parametric EQ bands used by the application.
+///
+/// The returned vector contains a single peaking band centered at 1000.0 Hz with 0.0 dB gain and a Q factor of 1.41.
+///
+/// # Examples
+///
+/// ```
+/// let bands = default_bands();
+/// assert_eq!(bands.len(), 1);
+/// let b = &bands[0];
+/// assert_eq!(b.filter_type, FilterType::Peaking);
+/// assert!((b.frequency - 1000.0).abs() < f32::EPSILON);
+/// assert!((b.gain - 0.0).abs() < f32::EPSILON);
+/// assert!((b.q_factor - 1.41).abs() < 1e-6);
+/// ```
 fn default_bands() -> Vec<ParametricBand> {
     vec![ParametricBand {
         filter_type: FilterType::Peaking,
@@ -101,6 +125,23 @@ fn default_bands() -> Vec<ParametricBand> {
 }
 
 impl Default for AppSettings {
+    /// Creates the default application settings for AntigravityEQ.
+    ///
+    /// The defaults are:
+    /// - `current_profile`: `None`
+    /// - `config_path`: `None`
+    /// - `bands`: the result of `default_bands()`
+    /// - `preamp`: `0.0`
+    /// - `eq_enabled`: `true`
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let s = AppSettings::default();
+    /// assert!(s.current_profile.is_none());
+    /// assert_eq!(s.preamp, 0.0);
+    /// assert!(s.eq_enabled);
+    /// ```
     fn default() -> Self {
         Self {
             current_profile: None,
@@ -207,6 +248,30 @@ fn current_windows_user() -> Result<String, String> {
     std::env::var("USERNAME").map_err(|_| "Unable to determine current user".to_string())
 }
 
+/// Checks that the given path refers to a regular (non-symlink) file.
+///
+/// # Parameters
+///
+/// * `path` - Filesystem path to validate.
+///
+/// # Returns
+///
+/// `Ok(())` if `path` exists, is a regular file, and is not a symlink; `Err(String)` with a diagnostic message otherwise.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::Path;
+/// use std::fs;
+///
+/// let mut p = std::env::temp_dir();
+/// p.push("ensure_regular_file_example.tmp");
+/// let _ = fs::File::create(&p).unwrap();
+///
+/// assert!(ensure_regular_file(&p).is_ok());
+///
+/// let _ = fs::remove_file(&p);
+/// ```
 #[cfg(windows)]
 fn ensure_regular_file(path: &Path) -> Result<(), String> {
     let metadata =
@@ -328,7 +393,32 @@ fn save_profile(name: String, preamp: f32, bands: Vec<ParametricBand>) -> Result
     Ok(())
 }
 
-/// Apply bands to live_config.txt for EqualizerAPO
+/// Write an EqualizerAPO live configuration file from the given parametric bands and preamp.
+///
+/// If `eq_enabled` is `true` (the default) the file will contain a Preamp line followed by
+/// EqualizerAPO-formatted filter lines for each band. If `eq_enabled` is `false` a minimal
+/// bypass configuration indicating the EQ is disabled will be written instead. When `config_path`
+/// is `None` the function writes to the application's `live_config.txt` inside the app directory.
+/// The function ensures required application directories exist, validates the target path against
+/// allowed locations, and performs platform-specific permission adjustments when necessary.
+///
+/// Parameters:
+/// - `config_path`: Optional path to the target configuration file; when omitted, writes to the
+///   application's `live_config.txt`.
+/// - `eq_enabled`: Optional flag to force-enable or disable EQ output; `None` behaves the same as
+///   `Some(true)`.
+///
+/// # Returns
+///
+/// `Ok(())` on success, `Err(String)` with a human-readable error message on failure.
+///
+/// # Examples
+///
+/// ```rust
+/// // write an empty EQ (no bands) with 0 dB preamp to the default live_config.txt
+/// let res = apply_profile(vec![], 0.0, None, None);
+/// assert!(res.is_ok());
+/// ```
 #[tauri::command]
 fn apply_profile(
     bands: Vec<ParametricBand>,
@@ -460,7 +550,31 @@ fn get_settings(state: tauri::State<AppState>) -> Result<AppSettings, String> {
         .map_err(|_| "Failed to lock settings".to_string())
 }
 
-/// Update settings (called when UI state changes)
+/// Update the persisted application settings and refresh the system tray menu.
+///
+/// Persists the provided bands, preamp, current profile, and optional config path; if `eq_enabled` is provided it updates that flag as well. After persisting the settings the tray menu is rebuilt to reflect any changes.
+///
+/// # Parameters
+///
+/// - `eq_enabled` — Optional override for the persisted EQ enabled flag; when `Some`, the stored `eq_enabled` is set to that value.
+/// - `config_path` — Optional filesystem path to the target EqualizerAPO (or live config) file to persist; stored verbatim when provided.
+///
+/// # Errors
+///
+/// Returns an `Err(String)` if saving the settings to disk fails; the string contains a human-readable error message.
+///
+/// # Examples
+///
+/// ```no_run
+/// // Example usage (state and app are provided by Tauri at runtime)
+/// let bands = Vec::new();
+/// let preamp = 0.0;
+/// let current_profile = Some(String::from("MyProfile"));
+/// let config_path = Some(String::from("C:\\path\\to\\config.txt"));
+/// let eq_enabled = Some(true);
+/// // `state` and `app` are available inside Tauri command handlers
+/// let _ = update_settings(bands, preamp, current_profile, config_path, eq_enabled, state, app);
+/// ```
 #[tauri::command]
 fn update_settings(
     bands: Vec<ParametricBand>,
@@ -512,7 +626,17 @@ fn start_ab_session(
     Ok(ui_state)
 }
 
-/// Apply an A/B option (switch presets)
+/// Apply the selected A/B test option by loading and applying its associated preset.
+///
+/// Sets the session's active option, loads the corresponding saved profile, adjusts the profile's preamp by the session's trim value, and applies the resulting profile to the configured EqualizerAPO path (honoring the app's current config path). Fails if there is no active A/B session or if the selected option is invalid or the profile cannot be loaded/applied.
+///
+/// # Examples
+///
+/// ```no_run
+/// // Invoke with a chosen option ("A", "B", "X", "1", or "2") from the frontend.
+/// // The command will set the session option, load the preset, apply trim, and write the config.
+/// apply_ab_option("A".to_string(), /* state */ todo!()).unwrap();
+/// ```
 #[tauri::command]
 fn apply_ab_option(
     option: String, // "A", "B", "X", "1", "2"
@@ -709,7 +833,22 @@ fn refresh_tray_menu(app: AppHandle) -> Result<(), String> {
     update_tray_menu(&app)
 }
 
-/// Apply a profile by name (load and apply it)
+/// Loads and applies the EQ profile with the given name, updates persisted settings and tray state, emits a `profile-changed-from-tray` event to the frontend, and persists the new current profile.
+///
+/// This operation respects the application's current EQ enabled setting when generating the configuration written to disk.
+///
+/// # Parameters
+/// - `name` — The profile name to load and apply.
+///
+/// # Returns
+/// `Ok(())` on success, `Err(String)` with a human-readable error message on failure.
+///
+/// # Examples
+///
+/// ```
+/// // `app` is an available `tauri::AppHandle`
+/// let _ = apply_profile_by_name(&app, "Flat");
+/// ```
 fn apply_profile_by_name(app: &AppHandle, name: &str) -> Result<(), String> {
     // Load the profile
     let profile = load_profile(name.to_string())?;

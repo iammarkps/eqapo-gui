@@ -18,6 +18,32 @@ function createDefaultBand(): ParametricBand {
 
 export type SyncStatus = "synced" | "syncing" | "pending" | "error";
 
+/**
+ * Manages equalizer state, persistence, profile operations, and applying settings to the backend.
+ *
+ * Provides reactive state (bands, preamp, profiles, currentProfile, isLoading, error, syncStatus, configPath, eqEnabled)
+ * and actions for modifying bands/preamp, debounced and immediate application to the backend, enabling/disabling the EQ,
+ * profile CRUD (save, load, delete, refresh), and import/export helpers.
+ *
+ * @returns An object with the equalizer state and action methods:
+ * - `bands`: array of current ParametricBand objects
+ * - `preamp`: current preamp value
+ * - `profiles`: available profile names
+ * - `currentProfile`: name of the loaded profile or `null`
+ * - `isLoading`: loading indicator for async profile operations
+ * - `error`: last error message or `null`
+ * - `syncStatus`: one of `"synced" | "syncing" | "pending" | "error"`
+ * - `configPath`: optional custom configuration path
+ * - `eqEnabled`: whether the equalizer is enabled
+ * - `setCustomConfigPath(path)`: set a custom config path
+ * - `addBand()`, `removeBand(id)`, `updateBand(id, updates)`: band management helpers
+ * - `updatePreamp(value)`: set preamp value
+ * - `debouncedApply(bands, preamp, enabled?)`: apply settings after a short debounce
+ * - `forceSync()`: immediately apply current settings
+ * - `toggleEq()`: toggle equalizer enabled state and apply it
+ * - `saveCurrentProfile(name)`, `loadProfileByName(name)`, `deleteProfileByName(name)`, `refreshProfiles()`: profile management
+ * - `exportProfile()`, `importProfile()`, `exportTxt()`, `importTxt()`: import/export helpers
+ */
 export function useEqualizer() {
     const [bands, setBands] = useState<ParametricBand[]>([createDefaultBand()]);
     const [preamp, setPreamp] = useState(0);

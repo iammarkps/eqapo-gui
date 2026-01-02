@@ -15,6 +15,12 @@ export interface AppSettings {
     eq_enabled: boolean;
 }
 
+/**
+ * Convert an array of ParametricBand objects to the Rust-compatible RustBand shape.
+ *
+ * @param bands - Array of parametric band objects; only `filter_type`, `frequency`, `gain`, and `q_factor` are retained
+ * @returns An array of RustBand objects containing `filter_type`, `frequency`, `gain`, and `q_factor` for each input band
+ */
 function toRustBands(bands: ParametricBand[]): RustBand[] {
     return bands.map(({ filter_type, frequency, gain, q_factor }) => ({
         filter_type,
@@ -32,6 +38,13 @@ export async function loadProfile(name: string): Promise<EqProfile> {
     return invoke<EqProfile>("load_profile", { name });
 }
 
+/**
+ * Save an EQ profile with the given name, preamp value, and parametric bands to the backend.
+ *
+ * @param name - Profile name to save
+ * @param preamp - Master preamp gain in decibels
+ * @param bands - Array of parametric band definitions to include in the profile
+ */
 export async function saveProfile(
     name: string,
     preamp: number,
@@ -40,6 +53,14 @@ export async function saveProfile(
     return invoke("save_profile", { name, preamp, bands: toRustBands(bands) });
 }
 
+/**
+ * Apply an EQ profile to the backend audio engine using the provided bands and preamp.
+ *
+ * @param bands - Parametric EQ bands to apply
+ * @param preamp - Master gain in decibels
+ * @param configPath - Optional path to a specific configuration file; pass `null` or omit to target the current config
+ * @param eqEnabled - Whether the EQ should be enabled after applying; defaults to `true`
+ */
 export async function applyProfile(
     bands: ParametricBand[],
     preamp: number,
@@ -54,6 +75,11 @@ export async function applyProfile(
     });
 }
 
+/**
+ * Delete the stored profile identified by `name`.
+ *
+ * @param name - The profile name to delete
+ */
 export async function deleteProfile(name: string): Promise<void> {
     return invoke("delete_profile", { name });
 }
@@ -74,6 +100,15 @@ export async function getSettings(): Promise<AppSettings> {
     return invoke<AppSettings>("get_settings");
 }
 
+/**
+ * Update the application's persisted settings with the provided EQ configuration.
+ *
+ * @param bands - Array of parametric EQ bands to store
+ * @param preamp - Master gain in decibels
+ * @param currentProfile - Name of the currently selected profile, or `null` if none
+ * @param configPath - Path to the configuration file to update, or `null` to use the default
+ * @param eqEnabled - Whether the equalizer is enabled
+ */
 export async function updateSettings(
     bands: ParametricBand[],
     preamp: number,
@@ -210,4 +245,3 @@ export async function stopPeakMeter(): Promise<void> {
 export async function getCurrentPeak(): Promise<PeakMeterUpdate> {
     return invoke<PeakMeterUpdate>("get_current_peak");
 }
-
