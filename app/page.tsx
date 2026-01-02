@@ -133,6 +133,12 @@ export default function Home() {
                                     onDelete={deleteProfileByName}
                                     isLoading={isLoading}
                                 />
+
+                                <a href="/ab-test">
+                                    <Button variant="outline" size="sm">
+                                        A/B Test
+                                    </Button>
+                                </a>
                             </div>
                         </div>
                     </div>

@@ -76,3 +76,88 @@ export async function updateSettings(
         configPath,
     });
 }
+
+// ============================================================================
+// A/B Test Types and Commands
+// ============================================================================
+
+export type ABTestMode = "ab" | "blindab" | "abx";
+export type SessionState = "setup" | "running" | "results";
+export type ActiveOption = "a" | "b" | "x";
+
+export interface ABStateForUI {
+    mode: ABTestMode;
+    state: SessionState;
+    current_trial: number;
+    total_trials: number;
+    trim_db: number;
+    auto_trim_db: number;
+    active_option: ActiveOption | null;
+    preset_a: string | null;
+    preset_b: string | null;
+}
+
+export interface ABAnswer {
+    trial: number;
+    hidden_mapping: boolean;
+    x_is_a: boolean | null;
+    user_choice: string;
+    correct: boolean | null;
+    time_ms: number;
+    trim_db: number;
+}
+
+export interface ABStatistics {
+    preference_a: number;
+    preference_b: number;
+    correct: number;
+    incorrect: number;
+    p_value: number;
+    verdict: string;
+}
+
+export interface ABSessionResults {
+    mode: ABTestMode;
+    preset_a: string;
+    preset_b: string;
+    trim_db: number;
+    total_trials: number;
+    answers: ABAnswer[];
+    statistics: ABStatistics;
+}
+
+export async function startABSession(
+    mode: ABTestMode,
+    presetA: string,
+    presetB: string,
+    totalTrials: number,
+    trimDb?: number
+): Promise<ABStateForUI> {
+    return invoke<ABStateForUI>("start_ab_session", {
+        mode,
+        presetA,
+        presetB,
+        totalTrials,
+        trimDb,
+    });
+}
+
+export async function applyABOption(option: string): Promise<void> {
+    return invoke("apply_ab_option", { option });
+}
+
+export async function recordABAnswer(answer: string): Promise<ABStateForUI> {
+    return invoke<ABStateForUI>("record_ab_answer", { answer });
+}
+
+export async function getABState(): Promise<ABStateForUI | null> {
+    return invoke<ABStateForUI | null>("get_ab_state");
+}
+
+export async function finishABSession(): Promise<ABSessionResults> {
+    return invoke<ABSessionResults>("finish_ab_session");
+}
+
+export async function updateABTrim(trimDb: number): Promise<void> {
+    return invoke("update_ab_trim", { trimDb });
+}

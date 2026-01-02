@@ -8,6 +8,12 @@ use tauri::{
     AppHandle, Emitter, Manager,
 };
 
+mod ab_test;
+use ab_test::{
+    export_results_csv, export_results_json, ABSession, ABSessionResults, ABStateForUI, ABTestMode,
+    ActiveOption,
+};
+
 /// Filter types supported by EqualizerAPO
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -95,6 +101,7 @@ impl Default for AppSettings {
 /// Managed state for tracking current settings
 pub struct AppState {
     pub settings: Mutex<AppSettings>,
+    pub ab_session: Mutex<Option<ABSession>>,
 }
 
 /// Get the AntigravityEQ directory in Documents
@@ -354,6 +361,155 @@ fn update_settings(
     Ok(())
 }
 
+// ============================================================================
+// A/B Test Commands
+// ============================================================================
+
+/// Start a new A/B test session
+#[tauri::command]
+fn start_ab_session(
+    mode: ABTestMode,
+    preset_a: String,
+    preset_b: String,
+    total_trials: usize,
+    trim_db: Option<f32>,
+    state: tauri::State<AppState>,
+) -> Result<ABStateForUI, String> {
+    let session = ABSession::new(mode, preset_a, preset_b, total_trials, trim_db)?;
+    let ui_state = session.get_ui_state();
+
+    if let Ok(mut ab) = state.ab_session.lock() {
+        *ab = Some(session);
+    }
+
+    Ok(ui_state)
+}
+
+/// Apply an A/B option (switch presets)
+#[tauri::command]
+fn apply_ab_option(
+    option: String, // "A", "B", "X", "1", "2"
+    state: tauri::State<AppState>,
+) -> Result<(), String> {
+    let mut ab_guard = state
+        .ab_session
+        .lock()
+        .map_err(|_| "Failed to lock session")?;
+    let session = ab_guard.as_mut().ok_or("No active A/B session")?;
+
+    let settings = state
+        .settings
+        .lock()
+        .map_err(|_| "Failed to lock settings")?;
+    let config_path = settings.config_path.clone();
+    drop(settings);
+
+    let (preset_name, trim) = match option.as_str() {
+        "A" => {
+            session.active_option = Some(ActiveOption::A);
+            session.get_preset_for_option(ActiveOption::A)
+        }
+        "B" => {
+            session.active_option = Some(ActiveOption::B);
+            session.get_preset_for_option(ActiveOption::B)
+        }
+        "X" => {
+            session.active_option = Some(ActiveOption::X);
+            session.get_preset_for_option(ActiveOption::X)
+        }
+        "1" => {
+            session.active_option = Some(ActiveOption::A); // Will be hidden in UI
+            session.get_preset_for_blind_option(1)
+        }
+        "2" => {
+            session.active_option = Some(ActiveOption::B); // Will be hidden in UI
+            session.get_preset_for_blind_option(2)
+        }
+        _ => return Err(format!("Invalid option: {}", option)),
+    };
+
+    // Load and apply the preset with trim
+    let profile = load_profile(preset_name.to_string())?;
+    let adjusted_preamp = profile.preamp + trim;
+
+    drop(ab_guard); // Release lock before apply_profile
+
+    apply_profile(profile.bands, adjusted_preamp, config_path)?;
+
+    Ok(())
+}
+
+/// Record user's answer for current trial
+#[tauri::command]
+fn record_ab_answer(answer: String, state: tauri::State<AppState>) -> Result<ABStateForUI, String> {
+    let mut ab_guard = state
+        .ab_session
+        .lock()
+        .map_err(|_| "Failed to lock session")?;
+    let session = ab_guard.as_mut().ok_or("No active A/B session")?;
+
+    session.record_answer(answer)?;
+    Ok(session.get_ui_state())
+}
+
+/// Get current A/B session state
+#[tauri::command]
+fn get_ab_state(state: tauri::State<AppState>) -> Result<Option<ABStateForUI>, String> {
+    let ab_guard = state
+        .ab_session
+        .lock()
+        .map_err(|_| "Failed to lock session")?;
+
+    Ok(ab_guard.as_ref().map(|s| s.get_ui_state()))
+}
+
+/// Finish session and export results
+#[tauri::command]
+fn finish_ab_session(state: tauri::State<AppState>) -> Result<ABSessionResults, String> {
+    let mut ab_guard = state
+        .ab_session
+        .lock()
+        .map_err(|_| "Failed to lock session")?;
+    let session = ab_guard.take().ok_or("No active A/B session")?;
+
+    let results = session.get_results();
+
+    // Export to files
+    let app_dir = get_app_dir()?;
+    let results_dir = app_dir.join("ab_results");
+    fs::create_dir_all(&results_dir).map_err(|e| format!("Failed to create results dir: {}", e))?;
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    // JSON export
+    let json_path = results_dir.join(format!("session_{}.json", timestamp));
+    let json_content = export_results_json(&results)?;
+    fs::write(&json_path, json_content).map_err(|e| format!("Failed to write JSON: {}", e))?;
+
+    // CSV export
+    let csv_path = results_dir.join(format!("session_{}.csv", timestamp));
+    let csv_content = export_results_csv(&results);
+    fs::write(&csv_path, csv_content).map_err(|e| format!("Failed to write CSV: {}", e))?;
+
+    Ok(results)
+}
+
+/// Update trim during session
+#[tauri::command]
+fn update_ab_trim(trim_db: f32, state: tauri::State<AppState>) -> Result<(), String> {
+    let mut ab_guard = state
+        .ab_session
+        .lock()
+        .map_err(|_| "Failed to lock session")?;
+    let session = ab_guard.as_mut().ok_or("No active A/B session")?;
+
+    session.trim_db = trim_db;
+    Ok(())
+}
+
 /// Build the tray menu with profiles
 fn build_tray_menu(app: &AppHandle) -> Result<Menu<tauri::Wry>, tauri::Error> {
     let profiles = list_profiles().unwrap_or_default();
@@ -510,6 +666,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .manage(AppState {
             settings: Mutex::new(settings),
+            ab_session: Mutex::new(None),
         })
         .setup(|app| {
             setup_tray(app.handle())?;
@@ -525,7 +682,14 @@ pub fn run() {
             set_current_profile,
             get_settings,
             update_settings,
-            refresh_tray_menu
+            refresh_tray_menu,
+            // A/B Test commands
+            start_ab_session,
+            apply_ab_option,
+            record_ab_answer,
+            get_ab_state,
+            finish_ab_session,
+            update_ab_trim
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
