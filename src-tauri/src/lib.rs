@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
@@ -130,6 +130,108 @@ fn ensure_dirs() -> Result<PathBuf, String> {
     Ok(app_dir)
 }
 
+fn allowed_config_dirs(app_dir: &Path) -> Vec<PathBuf> {
+    let mut allowed = vec![app_dir.to_path_buf()];
+
+    #[cfg(windows)]
+    {
+        if let Ok(program_files) = std::env::var("ProgramFiles") {
+            allowed.push(
+                PathBuf::from(program_files)
+                    .join("EqualizerAPO")
+                    .join("config"),
+            );
+        }
+        if let Ok(program_files_x86) = std::env::var("ProgramFiles(x86)") {
+            allowed.push(
+                PathBuf::from(program_files_x86)
+                    .join("EqualizerAPO")
+                    .join("config"),
+            );
+        }
+    }
+
+    allowed
+}
+
+fn canonicalize_target_path(target_path: &Path) -> Result<PathBuf, String> {
+    if target_path.exists() {
+        return target_path
+            .canonicalize()
+            .map_err(|e| format!("Failed to resolve config path: {}", e));
+    }
+
+    let parent = target_path
+        .parent()
+        .ok_or("Config path has no parent directory")?;
+    let parent_canon = parent
+        .canonicalize()
+        .map_err(|e| format!("Failed to resolve config path directory: {}", e))?;
+    let file_name = target_path
+        .file_name()
+        .ok_or("Config path missing file name")?;
+
+    Ok(parent_canon.join(file_name))
+}
+
+fn validate_config_path(target_path: &Path, app_dir: &Path) -> Result<PathBuf, String> {
+    let canonical_target = canonicalize_target_path(target_path)?;
+    let allowed_dirs = allowed_config_dirs(app_dir);
+    let canonical_allowed: Vec<PathBuf> = allowed_dirs
+        .iter()
+        .filter_map(|dir| dir.canonicalize().ok())
+        .collect();
+
+    if canonical_allowed
+        .iter()
+        .any(|dir| canonical_target.starts_with(dir))
+    {
+        Ok(canonical_target)
+    } else {
+        Err(format!(
+            "Config path {:?} is outside allowed directories",
+            target_path
+        ))
+    }
+}
+
+#[cfg(windows)]
+fn current_windows_user() -> Result<String, String> {
+    std::env::var("USERNAME").map_err(|_| "Unable to determine current user".to_string())
+}
+
+#[cfg(windows)]
+fn ensure_regular_file(path: &Path) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|e| format!("Failed to inspect config path: {}", e))?;
+    if metadata.is_file() && !metadata.file_type().is_symlink() {
+        Ok(())
+    } else {
+        Err("Config path is not a regular file".to_string())
+    }
+}
+
+#[cfg(windows)]
+fn run_icacls_grant(path: &Path, grant: &str) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+    let output = std::process::Command::new("icacls")
+        .arg(path)
+        .arg("/grant")
+        .arg(grant)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|e| format!("Failed to run icacls: {}", e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("icacls failed: {}", stderr.trim()))
+    }
+}
+
 /// Load settings from settings.json
 fn load_settings() -> AppSettings {
     let app_dir = match get_app_dir() {
@@ -226,12 +328,14 @@ fn apply_profile(
     preamp: f32,
     config_path: Option<String>,
 ) -> Result<(), String> {
+    let app_dir = ensure_dirs()?;
     let target_path = if let Some(path) = config_path {
         PathBuf::from(path)
     } else {
-        let app_dir = ensure_dirs()?;
         app_dir.join("live_config.txt")
     };
+
+    let target_path = validate_config_path(&target_path, &app_dir)?;
 
     // Build EqualizerAPO config content
     let mut lines = vec![
@@ -264,14 +368,11 @@ fn apply_profile(
         // If write fails, try to force permissions via icacls BEFORE failing
         #[cfg(target_os = "windows")]
         {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x08000000;
-            let _ = std::process::Command::new("icacls")
-                .arg(&target_path)
-                .arg("/grant")
-                .arg("Everyone:F") // Try granting Full Control
-                .creation_flags(CREATE_NO_WINDOW)
-                .output();
+            if target_path.exists() {
+                ensure_regular_file(&target_path)?;
+                let user = current_windows_user()?;
+                run_icacls_grant(&target_path, &format!("{}:F", user))?;
+            }
         }
 
         // Retry write once
@@ -286,15 +387,8 @@ fn apply_profile(
     // Fix permissions for EqualizerAPO (Windows Audio Service needs access)
     #[cfg(target_os = "windows")]
     {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-        let _ = std::process::Command::new("icacls")
-            .arg(&target_path)
-            .arg("/grant")
-            .arg("Everyone:R")
-            .creation_flags(CREATE_NO_WINDOW)
-            .output();
+        ensure_regular_file(&target_path)?;
+        run_icacls_grant(&target_path, "NT SERVICE\\AudioSrv:R")?;
     }
 
     Ok(())
