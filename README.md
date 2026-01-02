@@ -10,6 +10,7 @@
 - 🎚️ **Parametric EQ**: Add unlimited peaking, low-shelf, and high-shelf filters.
 - ⚡ **Real-Time Sync**: Changes update EqualizerAPO instantly (~10ms latency).
 - ⚠️ **Peak Gain Safety**: Built-in meter warns about potential clipping (>0dB).
+- 📊 **Audio Status Display**: Real-time output device, format (bits/Hz), and volume peak meter.
 - 🎛️ **Precise Control**: Text inputs for Preamp and Bands for exact value tuning.
 - 💾 **Persistence**: Auto-saves your UI state (sliders, profiles) so you never lose work.
 - 📂 **Profile Management**: Save and load unlimited JSON profiles.
@@ -105,8 +106,33 @@ Double-click this file to install AntigravityEQ on your machine.
 
 ---
 
+## 📊 Audio Status Display
+
+The status bar at the bottom of the window shows real-time audio information:
+
+| Field | Description |
+|-------|-------------|
+| **Output Device** | The active Windows audio output device name |
+| **Format** | Bit depth and sample rate (e.g., "32-bit float / 48 kHz") |
+| **Peak Meter** | Real-time output level in dBFS with visual bar |
+
+### Peak Meter Details
+
+- **Signal Source**: Measured **post-Windows-mixer** via WASAPI loopback capture
+- **Update Rate**: ~30 FPS for smooth visualization
+- **Peak Hold**: 1 second before decay
+- **Color Coding**:
+  - 🟢 **Green**: Safe levels (< -6 dBFS)
+  - 🟡 **Yellow**: Approaching clipping (-6 to -0.5 dBFS)
+  - 🔴 **Red**: Clipping detected (> -0.5 dBFS)
+
+> **Note**: The peak meter shows system-wide output levels. If other applications are playing audio, their signal will be included in the measurement. This reflects the final mixed output, not the EQ-processed signal specifically.
+
+---
+
 ## Tech Stack
 
 *   **Frontend**: Next.js 16.1 (App Router), React 19, TailwindCSS v4, Shadcn/UI
 *   **Backend**: Rust (Tauri v2)
 *   **State**: LocalStorage (Persistence), FileSystem (Profiles)
+

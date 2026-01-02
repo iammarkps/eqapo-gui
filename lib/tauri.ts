@@ -161,3 +161,40 @@ export async function finishABSession(): Promise<ABSessionResults> {
 export async function updateABTrim(trimDb: number): Promise<void> {
     return invoke("update_ab_trim", { trimDb });
 }
+
+// ============================================================================
+// Audio Status Types and Commands
+// ============================================================================
+
+export interface AudioOutputInfo {
+    device_name: string;
+    device_id: string;
+    sample_rate: number;
+    bit_depth: number;
+    channel_count: number;
+    is_default: boolean;
+    format_tag: string;
+}
+
+export interface PeakMeterUpdate {
+    peak_db: number;
+    peak_linear: number;
+    timestamp: number;
+}
+
+export async function getAudioOutputInfo(): Promise<AudioOutputInfo> {
+    return invoke<AudioOutputInfo>("get_audio_output_info");
+}
+
+export async function startPeakMeter(): Promise<void> {
+    return invoke("start_peak_meter");
+}
+
+export async function stopPeakMeter(): Promise<void> {
+    return invoke("stop_peak_meter");
+}
+
+export async function getCurrentPeak(): Promise<PeakMeterUpdate> {
+    return invoke<PeakMeterUpdate>("get_current_peak");
+}
+

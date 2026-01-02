@@ -14,6 +14,13 @@ use ab_test::{
     ActiveOption,
 };
 
+#[cfg(windows)]
+mod audio_monitor;
+#[cfg(windows)]
+use audio_monitor::{AudioMonitor, AudioOutputInfo, PeakMeterUpdate};
+#[cfg(windows)]
+use std::sync::Arc;
+
 /// Filter types supported by EqualizerAPO
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -102,6 +109,8 @@ impl Default for AppSettings {
 pub struct AppState {
     pub settings: Mutex<AppSettings>,
     pub ab_session: Mutex<Option<ABSession>>,
+    #[cfg(windows)]
+    pub audio_monitor: Arc<AudioMonitor>,
 }
 
 /// Get the AntigravityEQ directory in Documents
@@ -655,6 +664,63 @@ fn setup_tray(app: &AppHandle) -> Result<(), tauri::Error> {
     Ok(())
 }
 
+// ============================================================================
+// Audio Monitor Commands
+// ============================================================================
+
+/// Get current audio output device information
+#[cfg(windows)]
+#[tauri::command]
+fn get_audio_output_info(state: tauri::State<AppState>) -> Result<AudioOutputInfo, String> {
+    state.audio_monitor.get_audio_output_info()
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+fn get_audio_output_info() -> Result<(), String> {
+    Err("Audio monitoring is only available on Windows".to_string())
+}
+
+/// Start peak meter monitoring
+#[cfg(windows)]
+#[tauri::command]
+fn start_peak_meter(state: tauri::State<AppState>, app: AppHandle) -> Result<(), String> {
+    let app_handle = app.clone();
+    state.audio_monitor.start_peak_monitoring(move |update| {
+        let _ = app_handle.emit("peak_meter_update", update);
+    })
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+fn start_peak_meter() -> Result<(), String> {
+    Err("Audio monitoring is only available on Windows".to_string())
+}
+
+/// Stop peak meter monitoring
+#[cfg(windows)]
+#[tauri::command]
+fn stop_peak_meter(state: tauri::State<AppState>) {
+    state.audio_monitor.stop_peak_monitoring();
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+fn stop_peak_meter() {}
+
+/// Get current peak value without starting monitoring
+#[cfg(windows)]
+#[tauri::command]
+fn get_current_peak(state: tauri::State<AppState>) -> PeakMeterUpdate {
+    state.audio_monitor.get_current_peak()
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+fn get_current_peak() -> Result<(), String> {
+    Err("Audio monitoring is only available on Windows".to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Load initial settings
@@ -667,6 +733,8 @@ pub fn run() {
         .manage(AppState {
             settings: Mutex::new(settings),
             ab_session: Mutex::new(None),
+            #[cfg(windows)]
+            audio_monitor: Arc::new(AudioMonitor::new()),
         })
         .setup(|app| {
             setup_tray(app.handle())?;
@@ -689,7 +757,12 @@ pub fn run() {
             record_ab_answer,
             get_ab_state,
             finish_ab_session,
-            update_ab_trim
+            update_ab_trim,
+            // Audio monitor commands
+            get_audio_output_info,
+            start_peak_meter,
+            stop_peak_meter,
+            get_current_peak
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

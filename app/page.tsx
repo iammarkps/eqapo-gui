@@ -9,6 +9,7 @@ import { PeakMeter } from "@/components/peak-meter";
 import { SyncIndicator } from "@/components/ui/sync-indicator";
 import { PreampControl } from "@/components/preamp-control";
 import { SetupDialog } from "@/components/setup-dialog";
+import { AudioStatusPanel } from "@/components/audio-status-panel";
 import { useEqualizer } from "@/lib/use-equalizer";
 import { calculatePeakGain } from "@/lib/audio-math";
 import {
@@ -153,8 +154,11 @@ export default function Home() {
                 )}
 
                 <div className="container mx-auto px-6 py-8">
+                    {/* Audio Status Panel */}
+                    <AudioStatusPanel />
+
                     {/* Visualizer & Preamp */}
-                    <div className="flex flex-col gap-6 mb-8">
+                    <div className="flex flex-col gap-6 mb-8 mt-6">
                         {/* Preamp Section */}
                         <div className="w-full">
                             <PreampControl value={preamp} onChange={handlePreampChange} />
@@ -202,7 +206,7 @@ export default function Home() {
                 </div>
 
                 {/* Footer */}
-                <footer className="border-t border-border mt-12 py-6 bg-card/30">
+                <footer className="border-t border-border py-6 bg-card/30">
                     <div className="container mx-auto px-6 text-center text-muted-foreground text-sm">
                         <p>AntigravityEQ - EqualizerAPO GUI Manager</p>
                     </div>
