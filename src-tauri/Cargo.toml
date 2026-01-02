@@ -1,6 +1,6 @@
 [package]
 name = "eqapo-gui"
-version = "0.1.0-alpha"
+version = "0.1.0"
 description = "EqualizerAPO Profile Manager"
 authors = ["iammarkps"]
 edition = "2021"
