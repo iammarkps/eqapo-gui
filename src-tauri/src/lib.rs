@@ -120,10 +120,10 @@ pub struct AppState {
     pub audio_monitor: Arc<AudioMonitor>,
 }
 
-/// Get the AntigravityEQ directory in Documents
+/// Get the EQAPO GUI directory in Documents
 fn get_app_dir() -> Result<PathBuf, String> {
     let docs = dirs::document_dir().ok_or("Could not find Documents folder")?;
-    Ok(docs.join("AntigravityEQ"))
+    Ok(docs.join("EQAPO GUI"))
 }
 
 /// Ensure all required directories exist
@@ -349,7 +349,7 @@ fn apply_profile(
     let enabled = eq_enabled.unwrap_or(true);
     let content = if enabled {
         let mut lines = vec![
-            String::from("; AntigravityEQ Live Configuration"),
+            String::from("; EQAPO GUI Live Configuration"),
             String::from("; Auto-generated - do not edit manually"),
             String::from(""),
             format!("Preamp: {:.1} dB", preamp),
@@ -364,7 +364,7 @@ fn apply_profile(
     } else {
         // EQ disabled - write empty config (bypassed)
         vec![
-            String::from("; AntigravityEQ Live Configuration"),
+            String::from("; EQAPO GUI Live Configuration"),
             String::from("; EQ DISABLED - Bypass mode"),
             String::from(""),
             String::from("; No filters applied"),
@@ -755,7 +755,7 @@ fn setup_tray(app: &AppHandle) -> Result<(), tauri::Error> {
         .icon(app.default_window_icon().unwrap().clone())
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .tooltip("AntigravityEQ")
+        .tooltip("EQAPO GUI")
         .on_menu_event(move |app, event| {
             let id = event.id.as_ref();
             match id {

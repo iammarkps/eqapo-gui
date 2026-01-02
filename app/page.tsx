@@ -92,7 +92,7 @@ export default function Home() {
                         <div className="flex items-center justify-between">
                             <div className="flex items-center gap-4">
                                 <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-400 to-pink-500 bg-clip-text text-transparent">
-                                    AntigravityEQ
+                                    EQAPO GUI
                                 </h1>
                                 <SyncIndicator status={syncStatus} onForceSync={forceSync} />
                             </div>
@@ -219,7 +219,7 @@ export default function Home() {
                 {/* Footer */}
                 <footer className="border-t border-border py-6 bg-card/30">
                     <div className="container mx-auto px-6 text-center text-muted-foreground text-sm">
-                        <p>AntigravityEQ - EqualizerAPO GUI Manager</p>
+                        <p>EqualizerAPO GUI Manager</p>
                     </div>
                 </footer>
             </main>

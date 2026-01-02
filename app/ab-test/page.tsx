@@ -455,7 +455,7 @@ function ResultsScreen({ results, onReset }: ResultsScreenProps) {
 
                 {/* Export Note */}
                 <p className="text-xs text-muted-foreground text-center">
-                    Results exported to Documents/AntigravityEQ/ab_results/
+                    Results exported to Documents/EQAPO GUI/ab_results/
                 </p>
 
                 <Button onClick={onReset} className="w-full">

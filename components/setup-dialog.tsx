@@ -21,7 +21,7 @@ export function SetupDialog({ open, onSetPath }: SetupDialogProps) {
                     <AlertDialogTitle>⚙️ Setup Required</AlertDialogTitle>
                     <AlertDialogDescription className="space-y-3">
                         <p>
-                            Welcome to AntigravityEQ! To get started, you need to set the path to your
+                            Welcome to EQAPO GUI! To get started, you need to set the path to your
                             EqualizerAPO config file.
                         </p>
                         <p className="font-medium text-foreground">
@@ -31,7 +31,7 @@ export function SetupDialog({ open, onSetPath }: SetupDialogProps) {
                             C:\Program Files\EqualizerAPO\config\config.txt
                         </code>
                         <p className="text-xs opacity-75">
-                            This allows AntigravityEQ to apply your EQ settings in real-time.
+                            This allows EQAPO GUI to apply your EQ settings in real-time.
                         </p>
                     </AlertDialogDescription>
                 </AlertDialogHeader>

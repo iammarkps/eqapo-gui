@@ -1,4 +1,4 @@
-// Shared types for AntigravityEQ
+// Shared types for EQAPO GUI
 
 export type FilterType = 'peaking' | 'lowshelf' | 'highshelf';
 

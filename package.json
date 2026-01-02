@@ -1,7 +1,7 @@
 {
-  "name": "antigravity-eq",
+  "name": "eqapo-gui",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.0-alpha",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
