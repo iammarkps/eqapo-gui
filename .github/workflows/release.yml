@@ -1,0 +1,76 @@
+# Build and Release Windows App
+# Triggered when main branch is merged into release branch
+
+name: Build Release
+
+on:
+  push:
+    branches:
+      - release
+
+# Cancel in-progress runs for same workflow
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Setup Rust
+        uses: dtolnay/rust-action@stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install frontend dependencies
+        run: bun install
+
+      - name: Run tests
+        run: |
+          bun run test --run
+          cd src-tauri && cargo test
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: "EQAPO GUI v__VERSION__"
+          releaseBody: |
+            See the [CHANGELOG](CHANGELOG.md) for details.
+            
+            ## Installation
+            Download and run the `.exe` installer below.
+          releaseDraft: true
+          prerelease: false
+          includeUpdaterJson: false
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installers
+          path: |
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/nsis/*.exe
+          retention-days: 30
