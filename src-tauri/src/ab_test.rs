@@ -356,43 +356,24 @@ fn calculate_loudness_difference(preset_a_name: &str, preset_b_name: &str) -> Re
 }
 
 /// Estimate perceived loudness from EQ profile
-/// Uses weighted sum of gains (higher weight for mid frequencies)
+/// Uses preamp + maximum positive gain as a simple, predictable estimate
+///
+/// Rationale: EQ is intended to shape frequency balance, not boost overall volume.
+/// Using max positive gain gives a conservative estimate that ensures the louder
+/// frequencies are matched, without over-compensating for profiles with
+/// mixed positive and negative gains.
 fn estimate_loudness(profile: &EqProfile) -> f32 {
     let base = profile.preamp;
 
-    // Frequency-weighted gain sum (emphasis on 1-4kHz where ear is most sensitive)
-    let weighted_sum: f32 = profile
+    // Find maximum positive gain (boosts increase perceived loudness)
+    let max_positive_gain = profile
         .bands
         .iter()
-        .map(|band| {
-            let weight = frequency_weight(band.frequency);
-            band.gain * weight
-        })
-        .sum();
+        .map(|band| band.gain)
+        .filter(|&g| g > 0.0)
+        .fold(0.0f32, f32::max);
 
-    // Average weighted gain contribution
-    let avg_contribution = if profile.bands.is_empty() {
-        0.0
-    } else {
-        weighted_sum / profile.bands.len() as f32
-    };
-
-    base + avg_contribution * 0.5 // Scale factor for reasonable estimation
-}
-
-/// Weight factor based on ear sensitivity (A-weighting approximation)
-fn frequency_weight(freq: f32) -> f32 {
-    if freq < 200.0 {
-        0.3 // Low bass, less perceived
-    } else if freq < 500.0 {
-        0.6 // Upper bass
-    } else if freq < 2000.0 {
-        1.0 // Midrange, full weight
-    } else if freq < 6000.0 {
-        1.2 // Presence region, most sensitive
-    } else {
-        0.8 // High frequencies
-    }
+    base + max_positive_gain
 }
 
 /// Calculate binomial p-value (one-tailed, testing if result is better than chance)
