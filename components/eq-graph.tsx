@@ -11,6 +11,40 @@ import {
 } from "@/lib/audio-math";
 import { AUDIOPHILE_BANDS } from "@/lib/constants";
 
+// =============================================================================
+// Constants
+// =============================================================================
+
+const GRAPH_COLORS = {
+    background: "hsl(0, 0%, 6%)",
+    gridLine: "hsl(0, 0%, 15%)",
+    gridText: "hsl(0, 0%, 35%)",
+    zeroLine: "hsl(0, 0%, 35%)",
+    zeroLineText: "hsl(0, 0%, 50%)",
+    freqMarkerLine: "hsl(0, 0%, 18%)",
+    freqMarkerLabel: "hsl(0, 0%, 55%)",
+    freqMarkerHz: "hsl(0, 0%, 40%)",
+    curve: "hsl(262, 83%, 58%)",
+    curveGradientTop: "hsla(262, 83%, 58%, 0.25)",
+    curveGradientMid: "hsla(262, 83%, 58%, 0.08)",
+    curveGradientBottom: "hsla(262, 83%, 58%, 0.25)",
+} as const;
+
+const DB_RANGE = 30;
+const DB_STEP = 6;
+const DB_MIN_DISPLAY = -12;
+const DB_MAX_DISPLAY = 12;
+const CURVE_LINE_WIDTH = 2.5;
+const GRID_LINE_WIDTH = 1;
+const FONT_MAIN = "12px system-ui";
+const FONT_SMALL = "10px system-ui";
+const LABEL_PADDING = 4;
+const LABEL_AREA_HEIGHT = 32;
+
+// =============================================================================
+// Types
+// =============================================================================
+
 interface EqGraphProps {
     bands: ParametricBand[];
     preamp: number;
@@ -18,12 +52,152 @@ interface EqGraphProps {
     sampleRate?: number;
 }
 
-export function EqGraph({ bands, preamp, height = 220, sampleRate = 48000 }: EqGraphProps) {
-    const canvasRef = useRef<HTMLCanvasElement>(null);
-    const containerRef = useRef<HTMLDivElement>(null);
-    const [containerWidth, setContainerWidth] = useState(800);
+interface DrawContext {
+    ctx: CanvasRenderingContext2D;
+    width: number;
+    height: number;
+}
 
-    const responseDb = useMemo(() => {
+// =============================================================================
+// Drawing Helper Functions
+// =============================================================================
+
+/** Convert dB value to Y coordinate */
+function dbToY(db: number, height: number): number {
+    return height / 2 - (db / DB_RANGE) * height;
+}
+
+/** Convert frequency to X coordinate (log scale) */
+function freqToX(freq: number, width: number): number {
+    return ((Math.log10(freq) - LOG_FREQ_MIN) / (LOG_FREQ_MAX - LOG_FREQ_MIN)) * width;
+}
+
+/** Draw the background and clear the canvas */
+function drawBackground({ ctx, width, height }: DrawContext): void {
+    ctx.fillStyle = GRAPH_COLORS.background;
+    ctx.fillRect(0, 0, width, height);
+}
+
+/** Draw horizontal dB grid lines and labels */
+function drawDbGrid({ ctx, width, height }: DrawContext): void {
+    ctx.strokeStyle = GRAPH_COLORS.gridLine;
+    ctx.lineWidth = GRID_LINE_WIDTH;
+    ctx.fillStyle = GRAPH_COLORS.gridText;
+    ctx.font = FONT_MAIN;
+
+    for (let db = DB_MIN_DISPLAY; db <= DB_MAX_DISPLAY; db += DB_STEP) {
+        const y = dbToY(db, height);
+
+        // Draw grid line
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+
+        // Draw label (skip 0dB, drawn separately)
+        if (db !== 0) {
+            const label = `${db > 0 ? "+" : ""}${db}dB`;
+            ctx.fillText(label, LABEL_PADDING, y - LABEL_PADDING);
+        }
+    }
+}
+
+/** Draw vertical frequency band markers with labels */
+function drawFrequencyMarkers({ ctx, width, height }: DrawContext): void {
+    ctx.font = FONT_MAIN;
+    ctx.textAlign = "center";
+
+    for (const band of AUDIOPHILE_BANDS) {
+        const x = freqToX(band.freq, width);
+
+        // Draw vertical line
+        ctx.strokeStyle = GRAPH_COLORS.freqMarkerLine;
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height - LABEL_AREA_HEIGHT);
+        ctx.stroke();
+
+        // Draw band name label
+        ctx.fillStyle = GRAPH_COLORS.freqMarkerLabel;
+        ctx.fillText(band.label, x, height - 18);
+
+        // Draw Hz label
+        ctx.fillStyle = GRAPH_COLORS.freqMarkerHz;
+        ctx.font = FONT_SMALL;
+        ctx.fillText(band.hz, x, height - 6);
+        ctx.font = FONT_MAIN;
+    }
+
+    ctx.textAlign = "left";
+}
+
+/** Draw the 0dB reference line */
+function drawZeroLine({ ctx, width, height }: DrawContext): void {
+    const y = height / 2;
+
+    ctx.strokeStyle = GRAPH_COLORS.zeroLine;
+    ctx.lineWidth = GRID_LINE_WIDTH;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(width, y);
+    ctx.stroke();
+
+    ctx.fillStyle = GRAPH_COLORS.zeroLineText;
+    ctx.fillText("0dB", LABEL_PADDING, y - LABEL_PADDING);
+}
+
+/** Draw the frequency response curve */
+function drawResponseCurve(
+    { ctx, width, height }: DrawContext,
+    responseDb: Float32Array
+): void {
+    ctx.strokeStyle = GRAPH_COLORS.curve;
+    ctx.lineWidth = CURVE_LINE_WIDTH;
+    ctx.beginPath();
+
+    for (let i = 0; i < NUM_POINTS; i++) {
+        const x = (i / (NUM_POINTS - 1)) * width;
+        const db = Math.max(-15, Math.min(15, responseDb[i]));
+        const y = dbToY(db, height);
+
+        if (i === 0) {
+            ctx.moveTo(x, y);
+        } else {
+            ctx.lineTo(x, y);
+        }
+    }
+    ctx.stroke();
+}
+
+/** Draw the gradient fill under the curve */
+function drawCurveFill(
+    { ctx, width, height }: DrawContext
+): void {
+    // Complete the path to form a closed shape
+    ctx.lineTo(width, height / 2);
+    ctx.lineTo(0, height / 2);
+    ctx.closePath();
+
+    // Create and apply gradient fill
+    const gradient = ctx.createLinearGradient(0, 0, 0, height);
+    gradient.addColorStop(0, GRAPH_COLORS.curveGradientTop);
+    gradient.addColorStop(0.5, GRAPH_COLORS.curveGradientMid);
+    gradient.addColorStop(1, GRAPH_COLORS.curveGradientBottom);
+    ctx.fillStyle = gradient;
+    ctx.fill();
+}
+
+// =============================================================================
+// Hooks
+// =============================================================================
+
+/** Calculate frequency response for all bands */
+function useFrequencyResponse(
+    bands: ParametricBand[],
+    preamp: number,
+    sampleRate: number
+): Float32Array {
+    return useMemo(() => {
         const response = new Float32Array(NUM_POINTS);
 
         for (let i = 0; i < NUM_POINTS; i++) {
@@ -46,8 +220,12 @@ export function EqGraph({ bands, preamp, height = 220, sampleRate = 48000 }: EqG
 
         return response;
     }, [bands, preamp, sampleRate]);
+}
 
-    // Handle resize with ResizeObserver
+/** Observe container width changes */
+function useContainerWidth(containerRef: React.RefObject<HTMLDivElement | null>): number {
+    const [containerWidth, setContainerWidth] = useState(800);
+
     useEffect(() => {
         const container = containerRef.current;
         if (!container) return;
@@ -62,9 +240,28 @@ export function EqGraph({ bands, preamp, height = 220, sampleRate = 48000 }: EqG
         setContainerWidth(container.clientWidth);
 
         return () => observer.disconnect();
-    }, []);
+    }, [containerRef]);
 
-    // Render to canvas - triggered by width change
+    return containerWidth;
+}
+
+// =============================================================================
+// Component
+// =============================================================================
+
+export function EqGraph({
+    bands,
+    preamp,
+    height = 220,
+    sampleRate = 48000
+}: EqGraphProps) {
+    const canvasRef = useRef<HTMLCanvasElement>(null);
+    const containerRef = useRef<HTMLDivElement>(null);
+
+    const responseDb = useFrequencyResponse(bands, preamp, sampleRate);
+    const containerWidth = useContainerWidth(containerRef);
+
+    // Render to canvas when dependencies change
     useEffect(() => {
         const canvas = canvasRef.current;
         if (!canvas || containerWidth <= 0) return;
@@ -75,100 +272,23 @@ export function EqGraph({ bands, preamp, height = 220, sampleRate = 48000 }: EqG
         const width = containerWidth;
         const dpr = window.devicePixelRatio || 1;
 
-        // Set canvas size with DPR for sharp rendering
+        // Configure canvas for high-DPI displays
         canvas.width = width * dpr;
         canvas.height = height * dpr;
         canvas.style.width = `${width}px`;
         canvas.style.height = `${height}px`;
         ctx.scale(dpr, dpr);
 
-        // Clear
-        ctx.fillStyle = "hsl(0, 0%, 6%)";
-        ctx.fillRect(0, 0, width, height);
+        // Create draw context object
+        const drawCtx: DrawContext = { ctx, width, height };
 
-        // Draw grid
-        ctx.strokeStyle = "hsl(0, 0%, 15%)";
-        ctx.lineWidth = 1;
-
-        const dbRange = 30;
-        const dbStep = 6;
-
-        // Horizontal grid lines (dB)
-        ctx.fillStyle = "hsl(0, 0%, 35%)";
-        ctx.font = "10px system-ui";
-        for (let db = -12; db <= 12; db += dbStep) {
-            const y = height / 2 - (db / dbRange) * height;
-            ctx.beginPath();
-            ctx.moveTo(0, y);
-            ctx.lineTo(width, y);
-            ctx.stroke();
-            if (db !== 0) {
-                ctx.fillText(`${db > 0 ? "+" : ""}${db}dB`, 4, y - 4);
-            }
-        }
-
-        // Audiophile frequency band markers
-        ctx.font = "10px system-ui";
-        ctx.textAlign = "center";
-
-        for (const band of AUDIOPHILE_BANDS) {
-            const x = ((Math.log10(band.freq) - LOG_FREQ_MIN) / (LOG_FREQ_MAX - LOG_FREQ_MIN)) * width;
-
-            // Vertical line
-            ctx.strokeStyle = "hsl(0, 0%, 18%)";
-            ctx.beginPath();
-            ctx.moveTo(x, 0);
-            ctx.lineTo(x, height - 32);
-            ctx.stroke();
-
-            // Labels - Name and Hz
-            ctx.fillStyle = "hsl(0, 0%, 55%)";
-            ctx.fillText(band.label, x, height - 18);
-            ctx.fillStyle = "hsl(0, 0%, 40%)";
-            ctx.font = "9px system-ui";
-            ctx.fillText(band.hz, x, height - 6);
-            ctx.font = "10px system-ui";
-        }
-        ctx.textAlign = "left";
-
-        // Draw 0dB line
-        ctx.strokeStyle = "hsl(0, 0%, 35%)";
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(0, height / 2);
-        ctx.lineTo(width, height / 2);
-        ctx.stroke();
-        ctx.fillStyle = "hsl(0, 0%, 50%)";
-        ctx.fillText("0dB", 4, height / 2 - 4);
-
-        // Draw frequency response curve
-        ctx.strokeStyle = "hsl(262, 83%, 58%)";
-        ctx.lineWidth = 2.5;
-        ctx.beginPath();
-
-        for (let i = 0; i < NUM_POINTS; i++) {
-            const x = (i / (NUM_POINTS - 1)) * width;
-            const db = Math.max(-15, Math.min(15, responseDb[i]));
-            const y = height / 2 - (db / dbRange) * height;
-
-            if (i === 0) {
-                ctx.moveTo(x, y);
-            } else {
-                ctx.lineTo(x, y);
-            }
-        }
-        ctx.stroke();
-
-        // Fill under curve
-        ctx.lineTo(width, height / 2);
-        ctx.lineTo(0, height / 2);
-        ctx.closePath();
-        const gradient = ctx.createLinearGradient(0, 0, 0, height);
-        gradient.addColorStop(0, "hsla(262, 83%, 58%, 0.25)");
-        gradient.addColorStop(0.5, "hsla(262, 83%, 58%, 0.08)");
-        gradient.addColorStop(1, "hsla(262, 83%, 58%, 0.25)");
-        ctx.fillStyle = gradient;
-        ctx.fill();
+        // Draw all elements in order
+        drawBackground(drawCtx);
+        drawDbGrid(drawCtx);
+        drawFrequencyMarkers(drawCtx);
+        drawZeroLine(drawCtx);
+        drawResponseCurve(drawCtx, responseDb);
+        drawCurveFill(drawCtx);
 
     }, [responseDb, height, containerWidth]);
 
