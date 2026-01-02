@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
+import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import type { ParametricBand } from "@/lib/types";
 import * as tauri from "@/lib/tauri";
 import { generateId, handleExportProfile, handleImportProfile, handleExportTxt, handleImportTxt } from "./file-io";
@@ -27,60 +28,107 @@ export function useEqualizer() {
     const [syncStatus, setSyncStatus] = useState<SyncStatus>("synced");
     const [configPath, setConfigPath] = useState<string | null>(null);
 
-    // Debounce timer ref
+    // Debounce timer ref for saving to backend
+    const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    // Debounce timer ref for applying to EqualizerAPO
     const applyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    // Load profiles and persisted state on mount
+    // Load profiles and persisted state from backend on mount
     useEffect(() => {
-        refreshProfiles();
-        let path: string | null = null;
-
-        const storedPath = localStorage.getItem("eq_config_path");
-        if (storedPath) {
-            setConfigPath(storedPath);
-            path = storedPath;
-        }
-
-        // Load autosave
-        const savedState = localStorage.getItem("eq_autosave");
-        if (savedState) {
+        const loadInitialState = async () => {
             try {
-                const { bands: savedBands, preamp: savedPreamp, currentProfile: savedProfile } = JSON.parse(savedState);
-                if (Array.isArray(savedBands) && savedBands.length > 0) setBands(savedBands);
-                if (typeof savedPreamp === "number") setPreamp(savedPreamp);
-                if (typeof savedProfile === "string" || savedProfile === null) setCurrentProfile(savedProfile);
+                // Load profiles first
+                const list = await tauri.listProfiles();
+                setProfiles(list);
 
-                // Force sync to ensure live_config.txt matches the restored UI
-                if (savedBands && typeof savedPreamp === "number") {
-                    // We must use the local variables here, not state, because state updates are async
-                    tauri.applyProfile(savedBands, savedPreamp, path).catch(console.error);
-                }
+                // Load settings from backend
+                const settings = await tauri.getSettings();
+
+                // Convert bands to include IDs
+                const bandsWithIds = settings.bands.map((b) => ({
+                    ...b,
+                    id: generateId(),
+                }));
+
+                setBands(bandsWithIds.length > 0 ? bandsWithIds : [createDefaultBand()]);
+                setPreamp(settings.preamp);
+                setCurrentProfile(settings.current_profile);
+                setConfigPath(settings.config_path);
+
+                // Apply to EqualizerAPO on startup
+                await tauri.applyProfile(bandsWithIds.length > 0 ? bandsWithIds : [createDefaultBand()], settings.preamp, settings.config_path);
+                setSyncStatus("synced");
             } catch (e) {
-                console.error("Failed to parse autosave:", e);
+                console.error("Failed to load settings from backend:", e);
             }
-        }
+        };
+
+        loadInitialState();
     }, []);
 
-    // Persist state on change
+    // Persist state to backend on change (debounced)
     useEffect(() => {
-        // Debounce saving to local storage slightly to avoid rapid writes during slider drag
-        const timer = setTimeout(() => {
-            const state = { bands, preamp, currentProfile };
-            localStorage.setItem("eq_autosave", JSON.stringify(state));
+        // Debounce saving to backend to avoid rapid writes during slider drag
+        if (saveTimeoutRef.current) {
+            clearTimeout(saveTimeoutRef.current);
+        }
+        saveTimeoutRef.current = setTimeout(() => {
+            tauri.updateSettings(bands, preamp, currentProfile, configPath).catch(console.error);
         }, 500);
-        return () => clearTimeout(timer);
-    }, [bands, preamp, currentProfile]);
+        return () => {
+            if (saveTimeoutRef.current) {
+                clearTimeout(saveTimeoutRef.current);
+            }
+        };
+    }, [bands, preamp, currentProfile, configPath]);
+
+    // Listen for tray-initiated profile changes
+    useEffect(() => {
+        let unlisten: UnlistenFn | null = null;
+
+        const setupListener = async () => {
+            try {
+                unlisten = await listen<string>("profile-changed-from-tray", async (event) => {
+                    const profileName = event.payload;
+                    try {
+                        const profile = await tauri.loadProfile(profileName);
+                        const bandsWithIds = profile.bands.map((b) => ({
+                            ...b,
+                            id: generateId(),
+                        }));
+                        setBands(bandsWithIds);
+                        setPreamp(profile.preamp ?? 0);
+                        setCurrentProfile(profileName);
+                        setSyncStatus("synced");
+                    } catch (e) {
+                        console.error("Failed to sync profile from tray:", e);
+                    }
+                });
+            } catch (e) {
+                console.error("Failed to setup tray listener:", e);
+            }
+        };
+
+        setupListener();
+
+        return () => {
+            if (unlisten) {
+                unlisten();
+            }
+        };
+    }, []);
 
     const setCustomConfigPath = useCallback((path: string | null) => {
         setConfigPath(path);
-        if (path) localStorage.setItem("eq_config_path", path);
-        else localStorage.removeItem("eq_config_path");
+        // Will be saved to backend via the useEffect above
     }, []);
 
     const refreshProfiles = useCallback(async () => {
         try {
             const list = await tauri.listProfiles();
             setProfiles(list);
+            // Also refresh tray menu
+            await tauri.refreshTrayMenu();
         } catch (e) {
             console.error("Failed to list profiles:", e);
         }
@@ -145,6 +193,8 @@ export function useEqualizer() {
                 setIsLoading(true);
                 await tauri.saveProfile(name, preamp, bands);
                 setCurrentProfile(name);
+                // Sync with backend tray state
+                await tauri.setCurrentProfile(name);
                 await refreshProfiles();
                 setError(null);
             } catch (e) {
@@ -172,6 +222,9 @@ export function useEqualizer() {
                 setBands(bandsWithIds);
                 setPreamp(newPreamp);
                 setCurrentProfile(name);
+
+                // Sync with backend tray state
+                await tauri.setCurrentProfile(name);
 
                 // Auto-apply when loading
                 setSyncStatus("syncing");
