@@ -12,6 +12,7 @@ export interface AppSettings {
     config_path: string | null;
     bands: RustBand[];
     preamp: number;
+    eq_enabled: boolean;
 }
 
 function toRustBands(bands: ParametricBand[]): RustBand[] {
@@ -39,8 +40,18 @@ export async function saveProfile(
     return invoke("save_profile", { name, preamp, bands: toRustBands(bands) });
 }
 
-export async function applyProfile(bands: ParametricBand[], preamp: number, configPath?: string | null): Promise<void> {
-    return invoke("apply_profile", { bands: toRustBands(bands), preamp, configPath });
+export async function applyProfile(
+    bands: ParametricBand[],
+    preamp: number,
+    configPath?: string | null,
+    eqEnabled?: boolean
+): Promise<void> {
+    return invoke("apply_profile", {
+        bands: toRustBands(bands),
+        preamp,
+        configPath,
+        eqEnabled: eqEnabled ?? true,
+    });
 }
 
 export async function deleteProfile(name: string): Promise<void> {
@@ -67,13 +78,15 @@ export async function updateSettings(
     bands: ParametricBand[],
     preamp: number,
     currentProfile: string | null,
-    configPath: string | null
+    configPath: string | null,
+    eqEnabled?: boolean
 ): Promise<void> {
     return invoke("update_settings", {
         bands: toRustBands(bands),
         preamp,
         currentProfile,
         configPath,
+        eqEnabled,
     });
 }
 

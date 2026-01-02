@@ -31,6 +31,7 @@ export default function Home() {
         error,
         syncStatus,
         configPath,
+        eqEnabled,
         setCustomConfigPath,
         addBand,
         removeBand,
@@ -38,6 +39,7 @@ export default function Home() {
         updatePreamp,
         debouncedApply,
         forceSync,
+        toggleEq,
         saveCurrentProfile,
         loadProfileByName,
         deleteProfileByName,
@@ -134,6 +136,15 @@ export default function Home() {
                                     onDelete={deleteProfileByName}
                                     isLoading={isLoading}
                                 />
+
+                                <Button
+                                    variant={eqEnabled ? "default" : "outline"}
+                                    size="sm"
+                                    onClick={toggleEq}
+                                    className={eqEnabled ? "bg-green-600 hover:bg-green-700" : "text-red-500 border-red-500 hover:bg-red-500/10"}
+                                >
+                                    {eqEnabled ? "EQ On" : "EQ Off"}
+                                </Button>
 
                                 <a href="/ab-test">
                                     <Button variant="outline" size="sm">
