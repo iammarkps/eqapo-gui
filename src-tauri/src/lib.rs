@@ -83,6 +83,12 @@ pub struct AppSettings {
     pub bands: Vec<ParametricBand>,
     #[serde(default)]
     pub preamp: f32,
+    #[serde(default = "default_eq_enabled")]
+    pub eq_enabled: bool,
+}
+
+fn default_eq_enabled() -> bool {
+    true
 }
 
 fn default_bands() -> Vec<ParametricBand> {
@@ -101,6 +107,7 @@ impl Default for AppSettings {
             config_path: None,
             bands: default_bands(),
             preamp: 0.0,
+            eq_enabled: true,
         }
     }
 }
@@ -202,8 +209,8 @@ fn current_windows_user() -> Result<String, String> {
 
 #[cfg(windows)]
 fn ensure_regular_file(path: &Path) -> Result<(), String> {
-    let metadata = fs::symlink_metadata(path)
-        .map_err(|e| format!("Failed to inspect config path: {}", e))?;
+    let metadata =
+        fs::symlink_metadata(path).map_err(|e| format!("Failed to inspect config path: {}", e))?;
     if metadata.is_file() && !metadata.file_type().is_symlink() {
         Ok(())
     } else {
@@ -327,6 +334,7 @@ fn apply_profile(
     bands: Vec<ParametricBand>,
     preamp: f32,
     config_path: Option<String>,
+    eq_enabled: Option<bool>,
 ) -> Result<(), String> {
     let app_dir = ensure_dirs()?;
     let target_path = if let Some(path) = config_path {
@@ -338,19 +346,31 @@ fn apply_profile(
     let target_path = validate_config_path(&target_path, &app_dir)?;
 
     // Build EqualizerAPO config content
-    let mut lines = vec![
-        String::from("; AntigravityEQ Live Configuration"),
-        String::from("; Auto-generated - do not edit manually"),
-        String::from(""),
-        format!("Preamp: {:.1} dB", preamp),
-        String::from(""),
-    ];
+    let enabled = eq_enabled.unwrap_or(true);
+    let content = if enabled {
+        let mut lines = vec![
+            String::from("; AntigravityEQ Live Configuration"),
+            String::from("; Auto-generated - do not edit manually"),
+            String::from(""),
+            format!("Preamp: {:.1} dB", preamp),
+            String::from(""),
+        ];
 
-    for band in &bands {
-        lines.push(band.to_eapo_line());
-    }
+        for band in &bands {
+            lines.push(band.to_eapo_line());
+        }
 
-    let content = lines.join("\r\n");
+        lines.join("\r\n")
+    } else {
+        // EQ disabled - write empty config (bypassed)
+        vec![
+            String::from("; AntigravityEQ Live Configuration"),
+            String::from("; EQ DISABLED - Bypass mode"),
+            String::from(""),
+            String::from("; No filters applied"),
+        ]
+        .join("\r\n")
+    };
 
     // Try to remove readonly attribute if file exists
     if target_path.exists() {
@@ -447,6 +467,7 @@ fn update_settings(
     preamp: f32,
     current_profile: Option<String>,
     config_path: Option<String>,
+    eq_enabled: Option<bool>,
     state: tauri::State<AppState>,
     app: AppHandle,
 ) -> Result<(), String> {
@@ -455,6 +476,9 @@ fn update_settings(
         settings.preamp = preamp;
         settings.current_profile = current_profile;
         settings.config_path = config_path;
+        if let Some(enabled) = eq_enabled {
+            settings.eq_enabled = enabled;
+        }
         save_settings(&settings)?;
     }
 
@@ -537,7 +561,7 @@ fn apply_ab_option(
 
     drop(ab_guard); // Release lock before apply_profile
 
-    apply_profile(profile.bands, adjusted_preamp, config_path)?;
+    apply_profile(profile.bands, adjusted_preamp, config_path, Some(true))?;
 
     Ok(())
 }
@@ -690,8 +714,21 @@ fn apply_profile_by_name(app: &AppHandle, name: &str) -> Result<(), String> {
     // Load the profile
     let profile = load_profile(name.to_string())?;
 
+    // Get current eq_enabled state
+    let eq_enabled = app
+        .state::<AppState>()
+        .settings
+        .lock()
+        .map(|s| s.eq_enabled)
+        .unwrap_or(true);
+
     // Apply the profile
-    apply_profile(profile.bands.clone(), profile.preamp, None)?;
+    apply_profile(
+        profile.bands.clone(),
+        profile.preamp,
+        None,
+        Some(eq_enabled),
+    )?;
 
     // Update state and settings
     if let Ok(mut settings) = app.state::<AppState>().settings.lock() {
