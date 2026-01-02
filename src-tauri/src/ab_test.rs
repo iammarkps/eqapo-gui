@@ -433,3 +433,253 @@ pub fn export_results_csv(results: &ABSessionResults) -> String {
 
     csv
 }
+
+// =============================================================================
+// Unit Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{FilterType, ParametricBand};
+
+    // =========================================================================
+    // Binomial Coefficient Tests
+    // =========================================================================
+
+    #[test]
+    fn binomial_coefficient_basic() {
+        assert_eq!(binomial_coefficient(5, 0), 1.0);
+        assert_eq!(binomial_coefficient(5, 5), 1.0);
+        assert_eq!(binomial_coefficient(5, 1), 5.0);
+        assert_eq!(binomial_coefficient(5, 2), 10.0);
+    }
+
+    #[test]
+    fn binomial_coefficient_symmetry() {
+        assert_eq!(binomial_coefficient(10, 3), binomial_coefficient(10, 7));
+    }
+
+    #[test]
+    fn binomial_coefficient_edge_cases() {
+        assert_eq!(binomial_coefficient(0, 0), 1.0);
+        assert_eq!(binomial_coefficient(1, 2), 0.0); // k > n
+    }
+
+    // =========================================================================
+    // Binomial Probability Tests
+    // =========================================================================
+
+    #[test]
+    fn binomial_probability_fair_coin() {
+        // P(X = 5) for 10 flips of fair coin
+        let prob = binomial_probability(5, 10, 0.5);
+        assert!((prob - 0.246).abs() < 0.01);
+    }
+
+    #[test]
+    fn binomial_probability_edge_cases() {
+        // P(X = 0) with p = 0.5
+        let prob = binomial_probability(0, 10, 0.5);
+        assert!(prob > 0.0);
+        assert!(prob < 0.01);
+
+        // P(X = 10) with p = 0.5 (all successes)
+        let prob_all = binomial_probability(10, 10, 0.5);
+        assert!(prob_all > 0.0);
+        assert!(prob_all < 0.01);
+    }
+
+    // =========================================================================
+    // Binomial P-Value Tests
+    // =========================================================================
+
+    #[test]
+    fn binomial_p_value_chance_level() {
+        // 50% correct out of 10 - should be high p-value (not significant)
+        let p = binomial_p_value(5, 10, 0.5);
+        assert!(p > 0.5);
+    }
+
+    #[test]
+    fn binomial_p_value_highly_significant() {
+        // 9 out of 10 correct - should be low p-value
+        let p = binomial_p_value(9, 10, 0.5);
+        assert!(p < 0.05);
+    }
+
+    #[test]
+    fn binomial_p_value_all_correct() {
+        // 10 out of 10 correct - extremely significant
+        let p = binomial_p_value(10, 10, 0.5);
+        assert!(p < 0.01);
+    }
+
+    #[test]
+    fn binomial_p_value_zero_trials() {
+        let p = binomial_p_value(0, 0, 0.5);
+        assert_eq!(p, 1.0);
+    }
+
+    // =========================================================================
+    // Loudness Estimation Tests
+    // =========================================================================
+
+    fn create_test_profile(preamp: f32, gains: Vec<f32>) -> EqProfile {
+        EqProfile {
+            name: "Test".to_string(),
+            preamp,
+            bands: gains
+                .into_iter()
+                .map(|gain| ParametricBand {
+                    filter_type: FilterType::Peaking,
+                    frequency: 1000.0,
+                    gain,
+                    q_factor: 1.0,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn estimate_loudness_preamp_only() {
+        let profile = create_test_profile(3.0, vec![]);
+        assert_eq!(estimate_loudness(&profile), 3.0);
+    }
+
+    #[test]
+    fn estimate_loudness_with_boost() {
+        let profile = create_test_profile(0.0, vec![6.0]);
+        assert_eq!(estimate_loudness(&profile), 6.0);
+    }
+
+    #[test]
+    fn estimate_loudness_with_cut_only() {
+        // Cuts should not increase loudness estimate
+        let profile = create_test_profile(0.0, vec![-6.0]);
+        assert_eq!(estimate_loudness(&profile), 0.0);
+    }
+
+    #[test]
+    fn estimate_loudness_preamp_plus_boost() {
+        let profile = create_test_profile(-3.0, vec![6.0]);
+        assert_eq!(estimate_loudness(&profile), 3.0); // -3 + 6
+    }
+
+    #[test]
+    fn estimate_loudness_multiple_bands() {
+        let profile = create_test_profile(0.0, vec![3.0, 6.0, 2.0]);
+        assert_eq!(estimate_loudness(&profile), 6.0); // Max of 3, 6, 2
+    }
+
+    #[test]
+    fn estimate_loudness_mixed_boost_cut() {
+        let profile = create_test_profile(0.0, vec![-6.0, 9.0, -3.0]);
+        assert_eq!(estimate_loudness(&profile), 9.0); // Only counts positive
+    }
+
+    // =========================================================================
+    // CSV Export Tests
+    // =========================================================================
+
+    #[test]
+    fn export_results_csv_header() {
+        let results = ABSessionResults {
+            mode: ABTestMode::AB,
+            preset_a: "A".to_string(),
+            preset_b: "B".to_string(),
+            trim_db: 0.0,
+            total_trials: 0,
+            answers: vec![],
+            statistics: ABStatistics {
+                preference_a: 0,
+                preference_b: 0,
+                correct: 0,
+                incorrect: 0,
+                p_value: 1.0,
+                verdict: "No data".to_string(),
+            },
+        };
+
+        let csv = export_results_csv(&results);
+        assert!(
+            csv.starts_with("trial,hidden_mapping,x_is_a,user_choice,correct,time_ms,trim_db\n")
+        );
+    }
+
+    #[test]
+    fn export_results_csv_with_data() {
+        let results = ABSessionResults {
+            mode: ABTestMode::AB,
+            preset_a: "A".to_string(),
+            preset_b: "B".to_string(),
+            trim_db: 0.0,
+            total_trials: 1,
+            answers: vec![ABAnswer {
+                trial: 1,
+                hidden_mapping: true,
+                x_is_a: None,
+                user_choice: "A".to_string(),
+                correct: None,
+                time_ms: 1500,
+                trim_db: 0.0,
+            }],
+            statistics: ABStatistics {
+                preference_a: 1,
+                preference_b: 0,
+                correct: 0,
+                incorrect: 0,
+                p_value: 0.5,
+                verdict: "No preference".to_string(),
+            },
+        };
+
+        let csv = export_results_csv(&results);
+        assert!(csv.contains("1,true,,A,,1500,0"));
+    }
+
+    // =========================================================================
+    // JSON Export Tests
+    // =========================================================================
+
+    #[test]
+    fn export_results_json_valid() {
+        let results = ABSessionResults {
+            mode: ABTestMode::ABX,
+            preset_a: "Test A".to_string(),
+            preset_b: "Test B".to_string(),
+            trim_db: -1.5,
+            total_trials: 10,
+            answers: vec![],
+            statistics: ABStatistics {
+                preference_a: 0,
+                preference_b: 0,
+                correct: 7,
+                incorrect: 3,
+                p_value: 0.17,
+                verdict: "No significant difference".to_string(),
+            },
+        };
+
+        let json = export_results_json(&results).unwrap();
+        assert!(json.contains("\"mode\": \"abx\""));
+        assert!(json.contains("\"preset_a\": \"Test A\""));
+        assert!(json.contains("\"correct\": 7"));
+    }
+
+    // =========================================================================
+    // ABTestMode Serialization Tests
+    // =========================================================================
+
+    #[test]
+    fn ab_test_mode_serializes_lowercase() {
+        let ab = ABTestMode::AB;
+        assert_eq!(serde_json::to_string(&ab).unwrap(), "\"ab\"");
+
+        let blind = ABTestMode::BlindAB;
+        assert_eq!(serde_json::to_string(&blind).unwrap(), "\"blindab\"");
+
+        let abx = ABTestMode::ABX;
+        assert_eq!(serde_json::to_string(&abx).unwrap(), "\"abx\"");
+    }
+}

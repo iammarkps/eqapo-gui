@@ -898,3 +898,187 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+// =============================================================================
+// Unit Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // =========================================================================
+    // FilterType Tests
+    // =========================================================================
+
+    #[test]
+    fn filter_type_to_eapo_code_peaking() {
+        assert_eq!(FilterType::Peaking.to_eapo_code(), "PK");
+    }
+
+    #[test]
+    fn filter_type_to_eapo_code_lowshelf() {
+        assert_eq!(FilterType::LowShelf.to_eapo_code(), "LSC");
+    }
+
+    #[test]
+    fn filter_type_to_eapo_code_highshelf() {
+        assert_eq!(FilterType::HighShelf.to_eapo_code(), "HSC");
+    }
+
+    // =========================================================================
+    // ParametricBand Tests
+    // =========================================================================
+
+    #[test]
+    fn parametric_band_to_eapo_line_peaking() {
+        let band = ParametricBand {
+            filter_type: FilterType::Peaking,
+            frequency: 1000.0,
+            gain: 6.0,
+            q_factor: 1.41,
+        };
+        let line = band.to_eapo_line();
+        assert_eq!(line, "Filter: ON PK Fc 1000 Hz Gain 6.0 dB Q 1.41");
+    }
+
+    #[test]
+    fn parametric_band_to_eapo_line_lowshelf() {
+        let band = ParametricBand {
+            filter_type: FilterType::LowShelf,
+            frequency: 100.0,
+            gain: 3.5,
+            q_factor: 0.71,
+        };
+        let line = band.to_eapo_line();
+        assert_eq!(line, "Filter: ON LSC Fc 100 Hz Gain 3.5 dB Q 0.71");
+    }
+
+    #[test]
+    fn parametric_band_to_eapo_line_highshelf() {
+        let band = ParametricBand {
+            filter_type: FilterType::HighShelf,
+            frequency: 8000.0,
+            gain: -2.0,
+            q_factor: 0.707,
+        };
+        let line = band.to_eapo_line();
+        // Note: q_factor is formatted as .2f so 0.707 becomes 0.71
+        assert_eq!(line, "Filter: ON HSC Fc 8000 Hz Gain -2.0 dB Q 0.71");
+    }
+
+    #[test]
+    fn parametric_band_to_eapo_line_negative_gain() {
+        let band = ParametricBand {
+            filter_type: FilterType::Peaking,
+            frequency: 500.0,
+            gain: -3.5,
+            q_factor: 2.0,
+        };
+        let line = band.to_eapo_line();
+        assert!(line.contains("Gain -3.5 dB"));
+    }
+
+    #[test]
+    fn parametric_band_to_eapo_line_frequency_truncated() {
+        // Frequency should be cast to i32, truncating decimals
+        let band = ParametricBand {
+            filter_type: FilterType::Peaking,
+            frequency: 1234.567,
+            gain: 0.0,
+            q_factor: 1.0,
+        };
+        let line = band.to_eapo_line();
+        assert!(line.contains("Fc 1234 Hz"));
+    }
+
+    // =========================================================================
+    // AppSettings Tests
+    // =========================================================================
+
+    #[test]
+    fn app_settings_default_eq_enabled() {
+        assert!(default_eq_enabled());
+    }
+
+    #[test]
+    fn app_settings_default_bands_has_one_band() {
+        let bands = default_bands();
+        assert_eq!(bands.len(), 1);
+    }
+
+    #[test]
+    fn app_settings_default_band_values() {
+        let bands = default_bands();
+        let band = &bands[0];
+        assert_eq!(band.frequency, 1000.0);
+        assert_eq!(band.gain, 0.0);
+        assert_eq!(band.q_factor, 1.41);
+    }
+
+    // =========================================================================
+    // Serialization Tests
+    // =========================================================================
+
+    #[test]
+    fn filter_type_serializes_lowercase() {
+        let peaking = FilterType::Peaking;
+        let json = serde_json::to_string(&peaking).unwrap();
+        assert_eq!(json, "\"peaking\"");
+
+        let lowshelf = FilterType::LowShelf;
+        let json = serde_json::to_string(&lowshelf).unwrap();
+        assert_eq!(json, "\"lowshelf\"");
+
+        let highshelf = FilterType::HighShelf;
+        let json = serde_json::to_string(&highshelf).unwrap();
+        assert_eq!(json, "\"highshelf\"");
+    }
+
+    #[test]
+    fn filter_type_deserializes_from_lowercase() {
+        let peaking: FilterType = serde_json::from_str("\"peaking\"").unwrap();
+        assert!(matches!(peaking, FilterType::Peaking));
+
+        let lowshelf: FilterType = serde_json::from_str("\"lowshelf\"").unwrap();
+        assert!(matches!(lowshelf, FilterType::LowShelf));
+
+        let highshelf: FilterType = serde_json::from_str("\"highshelf\"").unwrap();
+        assert!(matches!(highshelf, FilterType::HighShelf));
+    }
+
+    #[test]
+    fn parametric_band_roundtrip_serialization() {
+        let band = ParametricBand {
+            filter_type: FilterType::Peaking,
+            frequency: 1000.0,
+            gain: 6.0,
+            q_factor: 1.41,
+        };
+
+        let json = serde_json::to_string(&band).unwrap();
+        let deserialized: ParametricBand = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(deserialized.frequency, band.frequency);
+        assert_eq!(deserialized.gain, band.gain);
+        assert_eq!(deserialized.q_factor, band.q_factor);
+    }
+
+    #[test]
+    fn eq_profile_serialization() {
+        let profile = EqProfile {
+            name: "Test Profile".to_string(),
+            preamp: -3.5,
+            bands: vec![ParametricBand {
+                filter_type: FilterType::Peaking,
+                frequency: 1000.0,
+                gain: 6.0,
+                q_factor: 1.41,
+            }],
+        };
+
+        let json = serde_json::to_string(&profile).unwrap();
+        assert!(json.contains("\"name\":\"Test Profile\""));
+        assert!(json.contains("\"preamp\":-3.5"));
+    }
+}
