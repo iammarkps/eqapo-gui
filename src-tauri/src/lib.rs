@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager,
+    AppHandle, Emitter, Manager, WindowEvent,
 };
 
 mod ab_test;
@@ -870,6 +870,17 @@ pub fn run() {
         .setup(|app| {
             setup_tray(app.handle())?;
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            match event {
+                WindowEvent::CloseRequested { api, .. } => {
+                    // Prevent the window from closing
+                    api.prevent_close();
+                    // Hide the window to tray instead
+                    let _ = window.hide();
+                }
+                _ => {}
+            }
         })
         .invoke_handler(tauri::generate_handler![
             list_profiles,
