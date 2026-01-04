@@ -12,6 +12,31 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+// =============================================================================
+// Constants
+// =============================================================================
+
+/// Buffer duration for WASAPI capture in 100-nanosecond units (1 second)
+const WASAPI_BUFFER_DURATION_100NS: i64 = 10_000_000;
+
+/// Interval between peak meter UI updates (~30 FPS)
+const PEAK_METER_EMIT_INTERVAL: Duration = Duration::from_millis(33);
+
+/// Interval between audio buffer polling
+const AUDIO_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+/// Decay factor for peak meter (per poll interval)
+const PEAK_DECAY_FACTOR: f32 = 0.95;
+
+/// Duration to hold peak value before decay
+const PEAK_HOLD_DURATION: Duration = Duration::from_secs(1);
+
+/// Number of consecutive errors before assuming device change
+const DEVICE_CHANGE_ERROR_THRESHOLD: u32 = 10;
+
+/// Delay before attempting to reconnect after device change
+const DEVICE_RECONNECT_DELAY: Duration = Duration::from_millis(500);
+
 use windows::Win32::Media::Audio::{
     eConsole, eRender, IAudioCaptureClient, IAudioClient, IMMDevice, IMMDeviceEnumerator,
     MMDeviceEnumerator, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK, WAVEFORMATEX,
@@ -67,6 +92,15 @@ pub struct AudioMonitor {
     capture_thread: Mutex<Option<JoinHandle<()>>>,
 }
 
+impl std::fmt::Debug for AudioMonitor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AudioMonitor")
+            .field("is_monitoring", &self.is_monitoring.load(Ordering::SeqCst))
+            .field("has_capture_thread", &self.capture_thread.lock().is_some())
+            .finish()
+    }
+}
+
 // PKEY_Device_FriendlyName = {a45c254e-df1c-4efd-8020-67d146a850e0}, 14
 const PKEY_DEVICE_FRIENDLYNAME: PROPERTYKEY = PROPERTYKEY {
     fmtid: windows::core::GUID::from_u128(0xa45c254e_df1c_4efd_8020_67d146a850e0),
@@ -91,12 +125,39 @@ impl AudioMonitor {
 
     /// Get current audio output device information
     pub fn get_audio_output_info(&self) -> Result<AudioOutputInfo, String> {
+        // SAFETY: This calls Windows COM APIs which require unsafe. The safety
+        // invariants are:
+        // 1. COM is initialized before any COM calls and uninitialized after
+        // 2. All COM interface pointers are valid (obtained from Windows APIs)
+        // 3. All memory from COM (CoTaskMemAlloc) is freed with CoTaskMemFree
+        // 4. Slices are created from valid pointers with correct lengths
         unsafe { self.get_device_info_internal() }
     }
 
+    /// Internal implementation of device info retrieval.
+    ///
+    /// # Safety
+    ///
+    /// This function is unsafe because it:
+    /// - Calls Windows COM APIs that require proper initialization
+    /// - Reads from raw pointers returned by Windows APIs
+    /// - Interprets memory as WAVEFORMATEX structures
+    ///
+    /// Caller must ensure this is called on a thread where COM can be initialized.
     unsafe fn get_device_info_internal(&self) -> Result<AudioOutputInfo, String> {
-        // Initialize COM for this thread
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        // Initialize COM for this thread. CoInitializeEx returns S_OK on first init,
+        // S_FALSE if already initialized (which is fine), or an error.
+        // We ignore S_FALSE as it's expected when COM is already initialized.
+        // RPC_E_CHANGED_MODE (0x80010106) means COM was initialized with different
+        // threading model, which is acceptable - we can still use COM.
+        let hr = CoInitializeEx(None, COINIT_MULTITHREADED);
+        if hr.is_err() {
+            let code = hr.0 as u32;
+            // S_FALSE = 1, RPC_E_CHANGED_MODE = 0x80010106
+            if code != 1 && code != 0x80010106 {
+                return Err(format!("COM initialization failed: HRESULT 0x{:08X}", code));
+            }
+        }
 
         // Create device enumerator
         let enumerator: IMMDeviceEnumerator =
@@ -113,6 +174,9 @@ impl AudioMonitor {
             .GetId()
             .map_err(|e| format!("Failed to get device ID: {}", e))?;
 
+        // SAFETY: device_id_ptr is a valid PWSTR allocated by Windows.
+        // We find the null terminator by scanning, then create a slice of that length.
+        // The pointer remains valid until we're done reading.
         let device_id = if !device_id_ptr.0.is_null() {
             let len = (0..).take_while(|&i| *device_id_ptr.0.add(i) != 0).count();
             String::from_utf16_lossy(std::slice::from_raw_parts(device_id_ptr.0, len))
@@ -152,6 +216,11 @@ impl AudioMonitor {
     }
 
     /// Get device format from property store (PKEY_AudioEngine_DeviceFormat)
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure COM is initialized on the current thread.
+    /// This function reads raw memory from PROPVARIANT structures returned by Windows.
     unsafe fn get_device_format(
         &self,
         device: &IMMDevice,
@@ -164,9 +233,10 @@ impl AudioMonitor {
             .GetValue(&PKEY_AUDIOENGINE_DEVICEFORMAT)
             .map_err(|e| format!("Failed to get device format: {}", e))?;
 
+        // SAFETY: We need to read the raw PROPVARIANT structure to extract the blob.
         // The PROPVARIANT for VT_BLOB has the following layout:
         // vt (2 bytes) + reserved (6 bytes) + blob (BLOB struct: cbSize u32 + pBlobData *u8)
-        // Total offset to blob: 8 bytes, pBlobData at offset 12
+        // Total offset to blob: 8 bytes, pBlobData at offset 12 (32-bit) or 16 (64-bit)
         let propvar_ptr = &prop as *const _ as *const u8;
 
         // Read vt to check it's VT_BLOB (65)
@@ -176,17 +246,18 @@ impl AudioMonitor {
             return Err(format!("Property is not VT_BLOB, got vt={}", vt));
         }
 
-        // Read cbSize at offset 8
+        // SAFETY: Read cbSize at offset 8, then pBlobData at offset 16 (64-bit aligned).
+        // The BLOB struct is { cbSize: ULONG (4 bytes), pBlobData: *mut u8 }.
+        // On 64-bit, pBlobData is pointer-aligned so it's at offset 8 + 8 = 16.
         let cb_size = *((propvar_ptr.add(8)) as *const u32);
-        // Read pBlobData at offset 8+4 = 12 on 32-bit, but on 64-bit it's at offset 16 due to pointer alignment
-        // Actually BLOB is { cbSize: ULONG (4 bytes), pBlobData: *mut u8 }
-        // On 64-bit, pBlobData is pointer-aligned so it's at offset 8 + 8 = 16
         let blob_data = *((propvar_ptr.add(16)) as *const *const u8);
 
         if blob_data.is_null() || cb_size < std::mem::size_of::<WAVEFORMATEX>() as u32 {
             return Err("Invalid format blob".to_string());
         }
 
+        // SAFETY: blob_data points to valid WAVEFORMATEX data allocated by Windows,
+        // and we verified the size is sufficient.
         let format = &*(blob_data as *const WAVEFORMATEX);
         let (bit_depth, format_tag) = self.get_format_details(format);
 
@@ -199,6 +270,11 @@ impl AudioMonitor {
     }
 
     /// Fallback: get format via GetMixFormat
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure COM is initialized. The returned format pointer from
+    /// GetMixFormat is freed with CoTaskMemFree before returning.
     unsafe fn get_mix_format_fallback(
         &self,
         device: &IMMDevice,
@@ -215,6 +291,8 @@ impl AudioMonitor {
             return Err("Mix format is null".to_string());
         }
 
+        // SAFETY: format_ptr is valid and non-null (checked above).
+        // We read the format data before freeing the memory.
         let format = &*format_ptr;
         let (bit_depth, format_tag) = self.get_format_details(format);
 
@@ -225,11 +303,18 @@ impl AudioMonitor {
             format_tag,
         );
 
+        // SAFETY: format_ptr was allocated by Windows via CoTaskMemAlloc,
+        // so we must free it with CoTaskMemFree.
         CoTaskMemFree(Some(format_ptr as *const _));
 
         Ok(result)
     }
 
+    /// Get device friendly name from property store.
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure COM is initialized on the current thread.
     unsafe fn get_device_name(&self, device: &IMMDevice) -> Result<String, String> {
         let store: IPropertyStore = device
             .OpenPropertyStore(STGM_READ)
@@ -337,8 +422,86 @@ impl Drop for AudioMonitor {
     }
 }
 
-/// Audio capture loop running on a separate thread
-/// This loop automatically reconnects if the audio device or format changes
+/// Calculates the maximum absolute sample value from an audio buffer.
+///
+/// # Safety
+///
+/// - `buffer_ptr` must be a valid pointer to audio sample data
+/// - `sample_count` must not exceed the actual buffer size
+/// - `bytes_per_sample` must match the actual sample format
+/// - `is_float` must correctly indicate if samples are IEEE float format
+///
+/// # Returns
+///
+/// The maximum absolute sample value normalized to [0.0, 1.0] range.
+unsafe fn calculate_peak_from_buffer(
+    buffer_ptr: *mut u8,
+    sample_count: usize,
+    bytes_per_sample: u16,
+    is_float: bool,
+) -> f32 {
+    let mut max_sample = 0.0f32;
+
+    if is_float && bytes_per_sample == 4 {
+        // 32-bit IEEE float
+        let samples = std::slice::from_raw_parts(buffer_ptr as *const f32, sample_count);
+        for &s in samples {
+            let abs = s.abs();
+            if abs > max_sample {
+                max_sample = abs;
+            }
+        }
+    } else if bytes_per_sample == 2 {
+        // 16-bit PCM
+        let samples = std::slice::from_raw_parts(buffer_ptr as *const i16, sample_count);
+        for &s in samples {
+            let normalized = (s as f32) / 32768.0;
+            let abs = normalized.abs();
+            if abs > max_sample {
+                max_sample = abs;
+            }
+        }
+    } else if bytes_per_sample == 3 {
+        // 24-bit PCM (packed as 3 bytes per sample)
+        let data = std::slice::from_raw_parts(buffer_ptr, sample_count * 3);
+        for i in 0..sample_count {
+            let offset = i * 3;
+            // Sign-extend 24-bit to 32-bit by shifting to top of i32
+            let sample_i32 = ((data[offset] as i32) << 8)
+                | ((data[offset + 1] as i32) << 16)
+                | ((data[offset + 2] as i32) << 24);
+            let normalized = (sample_i32 as f32) / 2147483648.0;
+            let abs = normalized.abs();
+            if abs > max_sample {
+                max_sample = abs;
+            }
+        }
+    } else if bytes_per_sample == 4 && !is_float {
+        // 32-bit PCM integer
+        let samples = std::slice::from_raw_parts(buffer_ptr as *const i32, sample_count);
+        for &s in samples {
+            let normalized = (s as f32) / 2147483648.0;
+            let abs = normalized.abs();
+            if abs > max_sample {
+                max_sample = abs;
+            }
+        }
+    }
+
+    max_sample
+}
+
+/// Audio capture loop running on a separate thread.
+/// This loop automatically reconnects if the audio device or format changes.
+///
+/// # Safety
+///
+/// This function is unsafe because it:
+/// - Initializes and uses Windows COM APIs
+/// - Calls capture_session which performs unsafe audio buffer operations
+///
+/// Must be called on a dedicated thread (not the main thread) to avoid
+/// blocking the UI.
 unsafe fn capture_loop<F>(
     peak_state: Arc<Mutex<PeakMeterState>>,
     is_monitoring: Arc<AtomicBool>,
@@ -347,8 +510,16 @@ unsafe fn capture_loop<F>(
 where
     F: Fn(PeakMeterUpdate),
 {
-    // Initialize COM
-    let _ = CoInitializeEx(None, COINIT_MULTITHREADED).ok();
+    // Initialize COM for this thread. We accept RPC_E_CHANGED_MODE as it means
+    // COM is already initialized with a different threading model, which is fine.
+    let hr = CoInitializeEx(None, COINIT_MULTITHREADED);
+    if hr.is_err() {
+        let code = hr.0 as u32;
+        // S_FALSE = 1, RPC_E_CHANGED_MODE = 0x80010106
+        if code != 1 && code != 0x80010106 {
+            return Err(format!("COM initialization failed: HRESULT 0x{:08X}", code));
+        }
+    }
 
     // Outer loop handles reconnection on device/format changes
     while is_monitoring.load(Ordering::SeqCst) {
@@ -357,8 +528,8 @@ where
             Ok(()) => break, // Normal exit (monitoring stopped)
             Err(e) => {
                 eprintln!("Capture session error (will retry): {}", e);
-                // Wait a bit before reconnecting
-                thread::sleep(Duration::from_millis(500));
+                // Wait before reconnecting to avoid busy-loop on persistent errors
+                thread::sleep(DEVICE_RECONNECT_DELAY);
             }
         }
     }
@@ -367,7 +538,18 @@ where
     Ok(())
 }
 
-/// Single capture session - returns Ok(()) when monitoring stopped, Err on device change/error
+/// Single capture session - returns Ok(()) when monitoring stopped, Err on device change/error.
+///
+/// # Safety
+///
+/// This function is unsafe because it:
+/// - Reads from raw audio buffers returned by WASAPI
+/// - Interprets buffer memory as audio samples (f32, i16, i32, or 24-bit)
+/// - Must properly release buffers back to WASAPI
+///
+/// Caller must ensure:
+/// - COM is initialized on the current thread
+/// - is_monitoring is properly managed to allow clean shutdown
 unsafe fn capture_session<F>(
     peak_state: &Arc<Mutex<PeakMeterState>>,
     is_monitoring: &Arc<AtomicBool>,
@@ -395,25 +577,29 @@ where
         .GetMixFormat()
         .map_err(|e| format!("Failed to get format: {}", e))?;
 
+    // SAFETY: format_ptr is valid, returned by GetMixFormat.
     let format = &*format_ptr;
     let bytes_per_sample = format.wBitsPerSample / 8;
     let channels = format.nChannels as usize;
+
+    // SAFETY: Check if format is IEEE float by examining wFormatTag or SubFormat GUID.
+    // WAVE_FORMAT_IEEE_FLOAT = 3, WAVE_FORMAT_EXTENSIBLE = 0xFFFE
     let is_float = format.wFormatTag == 3
         || (format.wFormatTag == 0xFFFE && {
             let ext_ptr = format_ptr as *const WAVEFORMATEXTENSIBLE;
             let float_guid = windows::core::GUID::from_u128(0x00000003_0000_0010_8000_00aa00389b71);
+            // Use read_unaligned because WAVEFORMATEXTENSIBLE may not be properly aligned
             let sub_format_ptr = std::ptr::addr_of!((*ext_ptr).SubFormat);
             let sub_format = std::ptr::read_unaligned(sub_format_ptr);
             sub_format == float_guid
         });
 
     // Initialize audio client for loopback capture
-    let buffer_duration = 10_000_000i64; // 1 second in 100ns units
     audio_client
         .Initialize(
             AUDCLNT_SHAREMODE_SHARED,
             AUDCLNT_STREAMFLAGS_LOOPBACK,
-            buffer_duration,
+            WASAPI_BUFFER_DURATION_100NS,
             0,
             format_ptr,
             None,
@@ -431,19 +617,13 @@ where
         .map_err(|e| format!("Failed to start capture: {}", e))?;
 
     let mut last_emit = Instant::now();
-    let emit_interval = Duration::from_millis(33); // ~30 FPS
-    let poll_interval = Duration::from_millis(10); // Poll every 10ms
-
-    // Decay constants
-    let decay_factor = 0.95f32;
-    let peak_hold_duration = Duration::from_secs(1);
 
     // Track consecutive errors to detect device changes
     let mut consecutive_errors = 0u32;
 
     while is_monitoring.load(Ordering::SeqCst) {
         // Sleep to avoid busy-waiting
-        thread::sleep(poll_interval);
+        thread::sleep(AUDIO_POLL_INTERVAL);
 
         // Get available data
         let mut buffer_ptr = std::ptr::null_mut();
@@ -460,8 +640,8 @@ where
 
         if get_result.is_err() {
             consecutive_errors += 1;
-            // After 10 consecutive errors (~100ms), assume device changed
-            if consecutive_errors > 10 {
+            // After threshold consecutive errors, assume device changed
+            if consecutive_errors > DEVICE_CHANGE_ERROR_THRESHOLD {
                 audio_client.Stop().ok();
                 CoTaskMemFree(Some(format_ptr as *const _));
                 return Err("Device or format changed".to_string());
@@ -475,50 +655,14 @@ where
             let sample_count = frames_available as usize * channels;
 
             // Calculate peak from samples
-            let mut max_sample = 0.0f32;
-
-            if is_float && bytes_per_sample == 4 {
-                let samples = std::slice::from_raw_parts(buffer_ptr as *const f32, sample_count);
-                for &s in samples {
-                    let abs = s.abs();
-                    if abs > max_sample {
-                        max_sample = abs;
-                    }
-                }
-            } else if bytes_per_sample == 2 {
-                let samples = std::slice::from_raw_parts(buffer_ptr as *const i16, sample_count);
-                for &s in samples {
-                    let normalized = (s as f32) / 32768.0;
-                    let abs = normalized.abs();
-                    if abs > max_sample {
-                        max_sample = abs;
-                    }
-                }
-            } else if bytes_per_sample == 3 {
-                // 24-bit audio
-                let data = std::slice::from_raw_parts(buffer_ptr, sample_count * 3);
-                for i in 0..sample_count {
-                    let offset = i * 3;
-                    let sample_i32 = ((data[offset] as i32) << 8)
-                        | ((data[offset + 1] as i32) << 16)
-                        | ((data[offset + 2] as i32) << 24);
-                    let normalized = (sample_i32 as f32) / 2147483648.0;
-                    let abs = normalized.abs();
-                    if abs > max_sample {
-                        max_sample = abs;
-                    }
-                }
-            } else if bytes_per_sample == 4 && !is_float {
-                // 32-bit integer
-                let samples = std::slice::from_raw_parts(buffer_ptr as *const i32, sample_count);
-                for &s in samples {
-                    let normalized = (s as f32) / 2147483648.0;
-                    let abs = normalized.abs();
-                    if abs > max_sample {
-                        max_sample = abs;
-                    }
-                }
-            }
+            // SAFETY: buffer_ptr is valid and contains `frames_available * channels` samples.
+            // The buffer format matches what we detected from GetMixFormat.
+            let max_sample = calculate_peak_from_buffer(
+                buffer_ptr,
+                sample_count,
+                bytes_per_sample,
+                is_float,
+            );
 
             // Update peak state with fast attack, slow decay
             {
@@ -529,23 +673,23 @@ where
                     state.current_peak = max_sample;
                 } else {
                     // Slow decay
-                    state.current_peak *= decay_factor;
+                    state.current_peak *= PEAK_DECAY_FACTOR;
                 }
 
                 // Peak hold
                 if max_sample > state.peak_hold {
                     state.peak_hold = max_sample;
                     state.peak_hold_time = Instant::now();
-                } else if state.peak_hold_time.elapsed() > peak_hold_duration {
+                } else if state.peak_hold_time.elapsed() > PEAK_HOLD_DURATION {
                     state.peak_hold = state.current_peak;
                 }
             }
 
-            // Release buffer
+            // Release buffer back to WASAPI - must always be called after GetBuffer succeeds
             let _ = capture_client.ReleaseBuffer(frames_available);
 
             // Emit update at throttled rate
-            if last_emit.elapsed() >= emit_interval {
+            if last_emit.elapsed() >= PEAK_METER_EMIT_INTERVAL {
                 let state = peak_state.lock();
                 let peak_linear = state.current_peak;
                 let peak_db = if peak_linear > 0.0 {

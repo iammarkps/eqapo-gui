@@ -8,6 +8,7 @@ use crate::{load_profile, EqProfile};
 /// Test mode for A/B comparison
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
+#[allow(clippy::upper_case_acronyms)] // ABX is a standard audio testing term
 pub enum ABTestMode {
     AB,      // Non-blind A/B switching
     BlindAB, // Blind test with Option 1/2
@@ -414,6 +415,19 @@ pub fn export_results_json(results: &ABSessionResults) -> Result<String, String>
     serde_json::to_string_pretty(results).map_err(|e| format!("Failed to serialize JSON: {}", e))
 }
 
+/// Escapes a string for CSV output according to RFC 4180.
+///
+/// If the string contains commas, quotes, or newlines, it is wrapped in quotes
+/// and any internal quotes are escaped by doubling them.
+fn escape_csv_field(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
+        // Wrap in quotes and escape internal quotes
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
 /// Export session results to CSV
 pub fn export_results_csv(results: &ABSessionResults) -> String {
     let mut csv = String::from("trial,hidden_mapping,x_is_a,user_choice,correct,time_ms,trim_db\n");
@@ -424,7 +438,7 @@ pub fn export_results_csv(results: &ABSessionResults) -> String {
             answer.trial,
             answer.hidden_mapping,
             answer.x_is_a.map(|b| b.to_string()).unwrap_or_default(),
-            answer.user_choice,
+            escape_csv_field(&answer.user_choice),
             answer.correct.map(|b| b.to_string()).unwrap_or_default(),
             answer.time_ms,
             answer.trim_db
@@ -681,5 +695,37 @@ mod tests {
 
         let abx = ABTestMode::ABX;
         assert_eq!(serde_json::to_string(&abx).unwrap(), "\"abx\"");
+    }
+
+    // =========================================================================
+    // CSV Escaping Tests
+    // =========================================================================
+
+    #[test]
+    fn escape_csv_field_no_special_chars() {
+        assert_eq!(escape_csv_field("simple text"), "simple text");
+    }
+
+    #[test]
+    fn escape_csv_field_with_comma() {
+        assert_eq!(escape_csv_field("hello, world"), "\"hello, world\"");
+    }
+
+    #[test]
+    fn escape_csv_field_with_quotes() {
+        assert_eq!(escape_csv_field("say \"hello\""), "\"say \"\"hello\"\"\"");
+    }
+
+    #[test]
+    fn escape_csv_field_with_newline() {
+        assert_eq!(escape_csv_field("line1\nline2"), "\"line1\nline2\"");
+    }
+
+    #[test]
+    fn escape_csv_field_with_all_special() {
+        assert_eq!(
+            escape_csv_field("\"hello\", world\n"),
+            "\"\"\"hello\"\", world\n\""
+        );
     }
 }

@@ -31,12 +31,11 @@ use crate::types::AppState;
 /// Returns an error if menu items cannot be created.
 fn build_tray_menu(app: &AppHandle) -> Result<Menu<tauri::Wry>, tauri::Error> {
     let profiles = list_profiles().unwrap_or_default();
-    let current = app
-        .state::<AppState>()
-        .settings
-        .lock()
-        .ok()
-        .and_then(|s| s.current_profile.clone());
+    let state = app.state::<AppState>();
+    let current = {
+        let settings = state.settings.lock();
+        settings.current_profile.clone()
+    };
 
     let mut items: Vec<MenuItem<tauri::Wry>> = Vec::new();
 
@@ -131,23 +130,21 @@ pub fn refresh_tray_menu(app: AppHandle) -> Result<(), String> {
 /// Returns an error if the profile cannot be loaded or applied.
 fn apply_profile_by_name(app: &AppHandle, name: &str) -> Result<(), String> {
     let profile = load_profile(name.to_string())?;
+    let state = app.state::<AppState>();
 
-    let eq_enabled = app
-        .state::<AppState>()
-        .settings
-        .lock()
-        .map(|s| s.eq_enabled)
-        .unwrap_or(true);
+    // Get eq_enabled from settings
+    let eq_enabled = {
+        let settings = state.settings.lock();
+        settings.eq_enabled
+    };
 
-    apply_profile(
-        profile.bands.clone(),
-        profile.preamp,
-        None,
-        Some(eq_enabled),
-    )?;
+    // Apply the profile
+    let preamp = profile.preamp;
+    apply_profile(profile.bands.clone(), preamp, None, Some(eq_enabled))?;
 
     // Update state and settings
-    if let Ok(mut settings) = app.state::<AppState>().settings.lock() {
+    {
+        let mut settings = state.settings.lock();
         settings.current_profile = Some(name.to_string());
         settings.bands = profile.bands;
         settings.preamp = profile.preamp;
@@ -188,8 +185,14 @@ fn apply_profile_by_name(app: &AppHandle, name: &str) -> Result<(), String> {
 pub fn setup_tray(app: &AppHandle) -> Result<(), tauri::Error> {
     let menu = build_tray_menu(app)?;
 
+    // Get the default window icon, falling back to an empty icon if not available
+    let icon = app
+        .default_window_icon()
+        .cloned()
+        .ok_or_else(|| tauri::Error::AssetNotFound("default window icon".to_string()))?;
+
     let _tray = TrayIconBuilder::with_id("main_tray")
-        .icon(app.default_window_icon().unwrap().clone())
+        .icon(icon)
         .menu(&menu)
         .show_menu_on_left_click(false)
         .tooltip("EQAPO GUI")

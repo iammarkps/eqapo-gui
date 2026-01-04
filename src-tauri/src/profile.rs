@@ -420,16 +420,17 @@ pub fn apply_profile(
         lines.join("\r\n")
     } else {
         // EQ disabled - write empty config (bypassed)
-        vec![
-            String::from("; EQAPO GUI Live Configuration"),
-            String::from("; EQ DISABLED - Bypass mode"),
-            String::from(""),
-            String::from("; No filters applied"),
+        [
+            "; EQAPO GUI Live Configuration",
+            "; EQ DISABLED - Bypass mode",
+            "",
+            "; No filters applied",
         ]
         .join("\r\n")
     };
 
-    // Try to remove readonly attribute if file exists
+    // Try to remove readonly attribute if file exists (Windows-specific behavior)
+    #[allow(clippy::permissions_set_readonly_false)] // This is Windows-only, Unix warning N/A
     if target_path.exists() {
         if let Ok(metadata) = fs::metadata(&target_path) {
             let mut perms = metadata.permissions();
@@ -482,7 +483,7 @@ pub fn apply_profile(
 /// `Some(name)` if a profile is active, `None` otherwise.
 #[tauri::command]
 pub fn get_current_profile(state: tauri::State<AppState>) -> Option<String> {
-    state.settings.lock().ok()?.current_profile.clone()
+    state.settings.lock().current_profile.clone()
 }
 
 /// Sets the current profile and persists the change.
@@ -505,14 +506,11 @@ pub fn set_current_profile(
     state: tauri::State<AppState>,
     app: AppHandle,
 ) -> Result<(), String> {
-    let mut settings = state
-        .settings
-        .lock()
-        .map_err(|_| "Failed to lock settings".to_string())?;
-    settings.current_profile = name;
-    save_settings(&settings)?;
-    drop(settings);
-
+    {
+        let mut settings = state.settings.lock();
+        settings.current_profile = name;
+        save_settings(&settings)?;
+    }
     let _ = update_tray_menu(&app);
     Ok(())
 }
@@ -522,17 +520,9 @@ pub fn set_current_profile(
 /// # Returns
 ///
 /// A clone of the current `AppSettings`.
-///
-/// # Errors
-///
-/// Returns an error if the settings lock cannot be acquired.
 #[tauri::command]
-pub fn get_settings(state: tauri::State<AppState>) -> Result<AppSettings, String> {
-    state
-        .settings
-        .lock()
-        .map(|s| s.clone())
-        .map_err(|_| "Failed to lock settings".to_string())
+pub fn get_settings(state: tauri::State<AppState>) -> AppSettings {
+    state.settings.lock().clone()
 }
 
 /// Updates application settings from the frontend UI.
@@ -563,21 +553,17 @@ pub fn update_settings(
     state: tauri::State<AppState>,
     app: AppHandle,
 ) -> Result<(), String> {
-    let mut settings = state
-        .settings
-        .lock()
-        .map_err(|_| "Failed to lock settings".to_string())?;
-
-    settings.bands = bands;
-    settings.preamp = preamp;
-    settings.current_profile = current_profile;
-    settings.config_path = config_path;
-    if let Some(enabled) = eq_enabled {
-        settings.eq_enabled = enabled;
+    {
+        let mut settings = state.settings.lock();
+        settings.bands = bands;
+        settings.preamp = preamp;
+        settings.current_profile = current_profile;
+        settings.config_path = config_path;
+        if let Some(enabled) = eq_enabled {
+            settings.eq_enabled = enabled;
+        }
+        save_settings(&settings)?;
     }
-    save_settings(&settings)?;
-    drop(settings);
-
     let _ = update_tray_menu(&app);
     Ok(())
 }

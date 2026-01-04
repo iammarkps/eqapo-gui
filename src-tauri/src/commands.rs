@@ -46,9 +46,9 @@ pub fn start_ab_session(
     let session = ABSession::new(mode, preset_a, preset_b, total_trials, trim_db)?;
     let ui_state = session.get_ui_state();
 
-    if let Ok(mut ab) = state.ab_session.lock() {
-        *ab = Some(session);
-    }
+    // Store the session
+    let mut ab_guard = state.ab_session.lock();
+    *ab_guard = Some(session);
 
     Ok(ui_state)
 }
@@ -77,48 +77,47 @@ pub fn start_ab_session(
 /// - The preset cannot be loaded or applied
 #[tauri::command]
 pub fn apply_ab_option(option: String, state: tauri::State<AppState>) -> Result<(), String> {
-    let mut ab_guard = state
-        .ab_session
-        .lock()
-        .map_err(|_| "Failed to lock session")?;
-    let session = ab_guard.as_mut().ok_or("No active A/B session")?;
-
-    let settings = state
-        .settings
-        .lock()
-        .map_err(|_| "Failed to lock settings")?;
-    let config_path = settings.config_path.clone();
-    drop(settings);
-
-    let (preset_name, trim) = match option.as_str() {
-        "A" => {
-            session.active_option = Some(ActiveOption::A);
-            session.get_preset_for_option(ActiveOption::A)
-        }
-        "B" => {
-            session.active_option = Some(ActiveOption::B);
-            session.get_preset_for_option(ActiveOption::B)
-        }
-        "X" => {
-            session.active_option = Some(ActiveOption::X);
-            session.get_preset_for_option(ActiveOption::X)
-        }
-        "1" => {
-            session.active_option = Some(ActiveOption::A);
-            session.get_preset_for_blind_option(1)
-        }
-        "2" => {
-            session.active_option = Some(ActiveOption::B);
-            session.get_preset_for_blind_option(2)
-        }
-        _ => return Err(format!("Invalid option: {}", option)),
+    // First, get config_path from settings (short lock scope)
+    let config_path = {
+        let settings = state.settings.lock();
+        settings.config_path.clone()
     };
 
-    let profile = load_profile(preset_name.to_string())?;
+    // Then work with the A/B session
+    let (preset_name, trim) = {
+        let mut ab_guard = state.ab_session.lock();
+        let session = ab_guard.as_mut().ok_or("No active A/B session")?;
+
+        let (preset_name, trim) = match option.as_str() {
+            "A" => {
+                session.active_option = Some(ActiveOption::A);
+                session.get_preset_for_option(ActiveOption::A)
+            }
+            "B" => {
+                session.active_option = Some(ActiveOption::B);
+                session.get_preset_for_option(ActiveOption::B)
+            }
+            "X" => {
+                session.active_option = Some(ActiveOption::X);
+                session.get_preset_for_option(ActiveOption::X)
+            }
+            "1" => {
+                session.active_option = Some(ActiveOption::A);
+                session.get_preset_for_blind_option(1)
+            }
+            "2" => {
+                session.active_option = Some(ActiveOption::B);
+                session.get_preset_for_blind_option(2)
+            }
+            _ => return Err(format!("Invalid option: {}", option)),
+        };
+
+        (preset_name.to_string(), trim)
+    };
+
+    // Now load and apply the profile (no locks held)
+    let profile = load_profile(preset_name)?;
     let adjusted_preamp = profile.preamp + trim;
-
-    drop(ab_guard);
-
     apply_profile(profile.bands, adjusted_preamp, config_path, Some(true))?;
 
     Ok(())
@@ -146,10 +145,7 @@ pub fn record_ab_answer(
     answer: String,
     state: tauri::State<AppState>,
 ) -> Result<ABStateForUI, String> {
-    let mut ab_guard = state
-        .ab_session
-        .lock()
-        .map_err(|_| "Failed to lock session")?;
+    let mut ab_guard = state.ab_session.lock();
     let session = ab_guard.as_mut().ok_or("No active A/B session")?;
 
     session.record_answer(answer)?;
@@ -161,18 +157,10 @@ pub fn record_ab_answer(
 /// # Returns
 ///
 /// `Some(state)` if a session is active, `None` otherwise.
-///
-/// # Errors
-///
-/// Returns an error if the session lock cannot be acquired.
 #[tauri::command]
-pub fn get_ab_state(state: tauri::State<AppState>) -> Result<Option<ABStateForUI>, String> {
-    let ab_guard = state
-        .ab_session
-        .lock()
-        .map_err(|_| "Failed to lock session")?;
-
-    Ok(ab_guard.as_ref().map(|s| s.get_ui_state()))
+pub fn get_ab_state(state: tauri::State<AppState>) -> Option<ABStateForUI> {
+    let ab_guard = state.ab_session.lock();
+    ab_guard.as_ref().map(|s| s.get_ui_state())
 }
 
 /// Finishes the A/B session and exports results to files.
@@ -197,10 +185,7 @@ pub fn get_ab_state(state: tauri::State<AppState>) -> Result<Option<ABStateForUI
 /// - File export fails
 #[tauri::command]
 pub fn finish_ab_session(state: tauri::State<AppState>) -> Result<ABSessionResults, String> {
-    let mut ab_guard = state
-        .ab_session
-        .lock()
-        .map_err(|_| "Failed to lock session")?;
+    let mut ab_guard = state.ab_session.lock();
     let session = ab_guard.take().ok_or("No active A/B session")?;
 
     let results = session.get_results();
@@ -243,10 +228,7 @@ pub fn finish_ab_session(state: tauri::State<AppState>) -> Result<ABSessionResul
 /// Returns an error if no active session exists.
 #[tauri::command]
 pub fn update_ab_trim(trim_db: f32, state: tauri::State<AppState>) -> Result<(), String> {
-    let mut ab_guard = state
-        .ab_session
-        .lock()
-        .map_err(|_| "Failed to lock session")?;
+    let mut ab_guard = state.ab_session.lock();
     let session = ab_guard.as_mut().ok_or("No active A/B session")?;
 
     session.trim_db = trim_db;
