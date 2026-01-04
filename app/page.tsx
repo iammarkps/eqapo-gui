@@ -10,6 +10,7 @@ import { SyncIndicator } from "@/components/ui/sync-indicator";
 import { PreampControl } from "@/components/preamp-control";
 import { SetupDialog } from "@/components/setup-dialog";
 import { AudioStatusPanel } from "@/components/audio-status-panel";
+import { ModeToggle } from "@/components/mode-toggle";
 import { useEqualizer } from "@/lib/use-equalizer";
 import { calculatePeakGain } from "@/lib/audio-math";
 import {
@@ -151,6 +152,8 @@ export default function Home() {
                                         A/B Test
                                     </Button>
                                 </a>
+
+                                <ModeToggle />
                             </div>
                         </div>
                     </div>

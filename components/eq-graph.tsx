@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useMemo, useState } from "react";
+import { useTheme } from "next-themes";
 import type { ParametricBand } from "@/lib/types";
 import {
     NUM_POINTS,
@@ -15,7 +16,7 @@ import { AUDIOPHILE_BANDS } from "@/lib/constants";
 // Constants
 // =============================================================================
 
-const GRAPH_COLORS = {
+const GRAPH_COLORS_DARK = {
     background: "hsl(0, 0%, 6%)",
     gridLine: "hsl(0, 0%, 15%)",
     gridText: "hsl(0, 0%, 35%)",
@@ -29,6 +30,36 @@ const GRAPH_COLORS = {
     curveGradientMid: "hsla(262, 83%, 58%, 0.08)",
     curveGradientBottom: "hsla(262, 83%, 58%, 0.25)",
 } as const;
+
+const GRAPH_COLORS_LIGHT = {
+    background: "hsl(0, 0%, 98%)",
+    gridLine: "hsl(0, 0%, 88%)",
+    gridText: "hsl(0, 0%, 45%)",
+    zeroLine: "hsl(0, 0%, 70%)",
+    zeroLineText: "hsl(0, 0%, 40%)",
+    freqMarkerLine: "hsl(0, 0%, 90%)",
+    freqMarkerLabel: "hsl(0, 0%, 35%)",
+    freqMarkerHz: "hsl(0, 0%, 50%)",
+    curve: "hsl(262, 83%, 50%)",
+    curveGradientTop: "hsla(262, 83%, 50%, 0.30)",
+    curveGradientMid: "hsla(262, 83%, 50%, 0.10)",
+    curveGradientBottom: "hsla(262, 83%, 50%, 0.30)",
+};
+
+interface GraphColors {
+    background: string;
+    gridLine: string;
+    gridText: string;
+    zeroLine: string;
+    zeroLineText: string;
+    freqMarkerLine: string;
+    freqMarkerLabel: string;
+    freqMarkerHz: string;
+    curve: string;
+    curveGradientTop: string;
+    curveGradientMid: string;
+    curveGradientBottom: string;
+}
 
 const DB_RANGE = 30;
 const DB_STEP = 6;
@@ -56,6 +87,7 @@ interface DrawContext {
     ctx: CanvasRenderingContext2D;
     width: number;
     height: number;
+    colors: GraphColors;
 }
 
 // =============================================================================
@@ -73,16 +105,16 @@ function freqToX(freq: number, width: number): number {
 }
 
 /** Draw the background and clear the canvas */
-function drawBackground({ ctx, width, height }: DrawContext): void {
-    ctx.fillStyle = GRAPH_COLORS.background;
+function drawBackground({ ctx, width, height, colors }: DrawContext): void {
+    ctx.fillStyle = colors.background;
     ctx.fillRect(0, 0, width, height);
 }
 
 /** Draw horizontal dB grid lines and labels */
-function drawDbGrid({ ctx, width, height }: DrawContext): void {
-    ctx.strokeStyle = GRAPH_COLORS.gridLine;
+function drawDbGrid({ ctx, width, height, colors }: DrawContext): void {
+    ctx.strokeStyle = colors.gridLine;
     ctx.lineWidth = GRID_LINE_WIDTH;
-    ctx.fillStyle = GRAPH_COLORS.gridText;
+    ctx.fillStyle = colors.gridText;
     ctx.font = FONT_MAIN;
 
     for (let db = DB_MIN_DISPLAY; db <= DB_MAX_DISPLAY; db += DB_STEP) {
@@ -103,7 +135,7 @@ function drawDbGrid({ ctx, width, height }: DrawContext): void {
 }
 
 /** Draw vertical frequency band markers with labels */
-function drawFrequencyMarkers({ ctx, width, height }: DrawContext): void {
+function drawFrequencyMarkers({ ctx, width, height, colors }: DrawContext): void {
     ctx.font = FONT_MAIN;
     ctx.textAlign = "center";
 
@@ -111,18 +143,18 @@ function drawFrequencyMarkers({ ctx, width, height }: DrawContext): void {
         const x = freqToX(band.freq, width);
 
         // Draw vertical line
-        ctx.strokeStyle = GRAPH_COLORS.freqMarkerLine;
+        ctx.strokeStyle = colors.freqMarkerLine;
         ctx.beginPath();
         ctx.moveTo(x, 0);
         ctx.lineTo(x, height - LABEL_AREA_HEIGHT);
         ctx.stroke();
 
         // Draw band name label
-        ctx.fillStyle = GRAPH_COLORS.freqMarkerLabel;
+        ctx.fillStyle = colors.freqMarkerLabel;
         ctx.fillText(band.label, x, height - 18);
 
         // Draw Hz label
-        ctx.fillStyle = GRAPH_COLORS.freqMarkerHz;
+        ctx.fillStyle = colors.freqMarkerHz;
         ctx.font = FONT_SMALL;
         ctx.fillText(band.hz, x, height - 6);
         ctx.font = FONT_MAIN;
@@ -132,26 +164,26 @@ function drawFrequencyMarkers({ ctx, width, height }: DrawContext): void {
 }
 
 /** Draw the 0dB reference line */
-function drawZeroLine({ ctx, width, height }: DrawContext): void {
+function drawZeroLine({ ctx, width, height, colors }: DrawContext): void {
     const y = height / 2;
 
-    ctx.strokeStyle = GRAPH_COLORS.zeroLine;
+    ctx.strokeStyle = colors.zeroLine;
     ctx.lineWidth = GRID_LINE_WIDTH;
     ctx.beginPath();
     ctx.moveTo(0, y);
     ctx.lineTo(width, y);
     ctx.stroke();
 
-    ctx.fillStyle = GRAPH_COLORS.zeroLineText;
+    ctx.fillStyle = colors.zeroLineText;
     ctx.fillText("0dB", LABEL_PADDING, y - LABEL_PADDING);
 }
 
 /** Draw the frequency response curve */
 function drawResponseCurve(
-    { ctx, width, height }: DrawContext,
+    { ctx, width, height, colors }: DrawContext,
     responseDb: Float32Array
 ): void {
-    ctx.strokeStyle = GRAPH_COLORS.curve;
+    ctx.strokeStyle = colors.curve;
     ctx.lineWidth = CURVE_LINE_WIDTH;
     ctx.beginPath();
 
@@ -171,7 +203,7 @@ function drawResponseCurve(
 
 /** Draw the gradient fill under the curve */
 function drawCurveFill(
-    { ctx, width, height }: DrawContext
+    { ctx, width, height, colors }: DrawContext
 ): void {
     // Complete the path to form a closed shape
     ctx.lineTo(width, height / 2);
@@ -180,9 +212,9 @@ function drawCurveFill(
 
     // Create and apply gradient fill
     const gradient = ctx.createLinearGradient(0, 0, 0, height);
-    gradient.addColorStop(0, GRAPH_COLORS.curveGradientTop);
-    gradient.addColorStop(0.5, GRAPH_COLORS.curveGradientMid);
-    gradient.addColorStop(1, GRAPH_COLORS.curveGradientBottom);
+    gradient.addColorStop(0, colors.curveGradientTop);
+    gradient.addColorStop(0.5, colors.curveGradientMid);
+    gradient.addColorStop(1, colors.curveGradientBottom);
     ctx.fillStyle = gradient;
     ctx.fill();
 }
@@ -257,9 +289,13 @@ export function EqGraph({
 }: EqGraphProps) {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
+    const { resolvedTheme } = useTheme();
 
     const responseDb = useFrequencyResponse(bands, preamp, sampleRate);
     const containerWidth = useContainerWidth(containerRef);
+
+    // Get colors based on current theme
+    const colors = resolvedTheme === "dark" ? GRAPH_COLORS_DARK : GRAPH_COLORS_LIGHT;
 
     // Render to canvas when dependencies change
     useEffect(() => {
@@ -280,7 +316,7 @@ export function EqGraph({
         ctx.scale(dpr, dpr);
 
         // Create draw context object
-        const drawCtx: DrawContext = { ctx, width, height };
+        const drawCtx: DrawContext = { ctx, width, height, colors };
 
         // Draw all elements in order
         drawBackground(drawCtx);
@@ -290,7 +326,7 @@ export function EqGraph({
         drawResponseCurve(drawCtx, responseDb);
         drawCurveFill(drawCtx);
 
-    }, [responseDb, height, containerWidth]);
+    }, [responseDb, height, containerWidth, colors]);
 
     return (
         <div ref={containerRef} className="w-full">
