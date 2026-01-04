@@ -175,7 +175,7 @@ export default function Home() {
                     <div className="flex flex-col gap-6 mb-8 mt-6">
                         {/* Preamp Section */}
                         <div className="w-full">
-                            <PreampControl value={preamp} onChange={handlePreampChange} />
+                            <PreampControl value={preamp} onChange={handlePreampChange} peakGain={peakGain} />
                         </div>
 
                         {/* Graph Section */}

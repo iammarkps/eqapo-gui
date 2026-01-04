@@ -128,5 +128,6 @@ export function calculatePeakGain(bands: any[], preamp: number, sampleRate: numb
         if (totalDb > maxDb) maxDb = totalDb;
     }
 
-    return maxDb;
+    // Round to one decimal place for consistent display
+    return Math.round(maxDb * 10) / 10;
 }

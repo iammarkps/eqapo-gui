@@ -2,13 +2,15 @@ import { useCallback, useEffect, useState } from "react";
 import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 
 interface PreampControlProps {
     value: number;
     onChange: (value: number) => void;
+    peakGain?: number;
 }
 
-export function PreampControl({ value, onChange }: PreampControlProps) {
+export function PreampControl({ value, onChange, peakGain = 0 }: PreampControlProps) {
     const [inputValue, setInputValue] = useState(value.toFixed(1));
 
     // Update input text when external value changes
@@ -41,11 +43,30 @@ export function PreampControl({ value, onChange }: PreampControlProps) {
         setInputValue(value.toFixed(1));
     }, [value]);
 
+    const handleMatchHeadroom = useCallback(() => {
+        // Set preamp to negative of peak gain to prevent clipping
+        const targetPreamp = Math.max(-20, Math.min(20, -peakGain + value));
+        onChange(Math.round(targetPreamp * 10) / 10);
+    }, [peakGain, value, onChange]);
+
+    // Calculate what the resulting peak would be after preamp
+    const resultingPeak = peakGain;
+    const needsHeadroom = resultingPeak > 0;
+
     return (
         <div className="p-6 border border-border rounded-lg bg-card">
             <div className="flex items-center justify-between mb-4">
                 <Label className="text-lg font-semibold">Preamp</Label>
                 <div className="flex items-center gap-2">
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleMatchHeadroom}
+                        disabled={!needsHeadroom}
+                        className="text-xs"
+                    >
+                        Match Headroom
+                    </Button>
                     <Input
                         value={inputValue}
                         onChange={handleInputChange}
@@ -69,6 +90,11 @@ export function PreampControl({ value, onChange }: PreampControlProps) {
             />
             <p className="text-xs text-muted-foreground mt-2">
                 Adjust overall volume before EQ processing
+                {needsHeadroom && (
+                    <span className="text-amber-500 ml-2">
+                        • Peak: +{resultingPeak.toFixed(1)}dB (clipping risk)
+                    </span>
+                )}
             </p>
         </div>
     );

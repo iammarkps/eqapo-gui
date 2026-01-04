@@ -37,7 +37,7 @@ export function PeakMeter({ peakDb }: PeakMeterProps) {
             <div className="flex flex-col items-end">
                 <span className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">Peak Gain</span>
                 <span className={cn("text-xl font-mono font-bold", colorClass)}>
-                    {peakDb > 0 ? "+" : ""}{peakDb.toFixed(2)} dB
+                    {peakDb > 0 ? "+" : ""}{peakDb.toFixed(1)} dB
                 </span>
             </div>
         </div>
