@@ -61,15 +61,16 @@ interface GraphColors {
     curveGradientBottom: string;
 }
 
-const DB_RANGE = 30;
-const DB_STEP = 6;
-const DB_MIN_DISPLAY = -12;
-const DB_MAX_DISPLAY = 12;
+const DB_RANGE = 40;
+const DB_STEP = 5;
+const DB_MAX_DISPLAY = Math.floor(DB_RANGE / 2);
+const DB_MIN_DISPLAY = -DB_MAX_DISPLAY;
 const CURVE_LINE_WIDTH = 2.5;
 const GRID_LINE_WIDTH = 1;
 const FONT_MAIN = "12px system-ui";
 const FONT_SMALL = "10px system-ui";
 const LABEL_PADDING = 4;
+const TOP_PADDING = 20;
 const LABEL_AREA_HEIGHT = 32;
 
 // =============================================================================
@@ -96,7 +97,11 @@ interface DrawContext {
 
 /** Convert dB value to Y coordinate */
 function dbToY(db: number, height: number): number {
-    return height / 2 - (db / DB_RANGE) * height;
+    // Graph area excludes top padding and bottom label area
+    const graphHeight = height - TOP_PADDING - LABEL_AREA_HEIGHT;
+    const displayRange = DB_MAX_DISPLAY - DB_MIN_DISPLAY;
+    // Map DB_MAX_DISPLAY to TOP_PADDING and DB_MIN_DISPLAY to (height - LABEL_AREA_HEIGHT)
+    return TOP_PADDING + graphHeight / 2 - (db / displayRange) * graphHeight;
 }
 
 /** Convert frequency to X coordinate (log scale) */
@@ -165,7 +170,7 @@ function drawFrequencyMarkers({ ctx, width, height, colors }: DrawContext): void
 
 /** Draw the 0dB reference line */
 function drawZeroLine({ ctx, width, height, colors }: DrawContext): void {
-    const y = height / 2;
+    const y = dbToY(0, height);
 
     ctx.strokeStyle = colors.zeroLine;
     ctx.lineWidth = GRID_LINE_WIDTH;
@@ -189,7 +194,7 @@ function drawResponseCurve(
 
     for (let i = 0; i < NUM_POINTS; i++) {
         const x = (i / (NUM_POINTS - 1)) * width;
-        const db = Math.max(-15, Math.min(15, responseDb[i]));
+        const db = Math.max(DB_MIN_DISPLAY, Math.min(DB_MAX_DISPLAY, responseDb[i]));
         const y = dbToY(db, height);
 
         if (i === 0) {
@@ -205,9 +210,10 @@ function drawResponseCurve(
 function drawCurveFill(
     { ctx, width, height, colors }: DrawContext
 ): void {
-    // Complete the path to form a closed shape
-    ctx.lineTo(width, height / 2);
-    ctx.lineTo(0, height / 2);
+    // Complete the path to form a closed shape at 0dB line
+    const zeroY = dbToY(0, height);
+    ctx.lineTo(width, zeroY);
+    ctx.lineTo(0, zeroY);
     ctx.closePath();
 
     // Create and apply gradient fill
