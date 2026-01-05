@@ -414,7 +414,9 @@ pub fn apply_profile(
         ];
 
         for band in &bands {
-            lines.push(band.to_eapo_line());
+            if band.enabled {
+                lines.push(band.to_eapo_line());
+            }
         }
 
         lines.join("\r\n")

@@ -13,6 +13,7 @@ function createDefaultBand(): ParametricBand {
         frequency: 1000,
         gain: 0,
         q_factor: 1.41,
+        enabled: true,
     };
 }
 
@@ -45,10 +46,11 @@ export function useEqualizer() {
                 // Load settings from backend
                 const settings = await tauri.getSettings();
 
-                // Convert bands to include IDs
+                // Convert bands to include IDs (preserve enabled field, default to true if missing)
                 const bandsWithIds = settings.bands.map((b) => ({
                     ...b,
                     id: generateId(),
+                    enabled: b.enabled ?? true,
                 }));
 
                 setBands(bandsWithIds.length > 0 ? bandsWithIds : [createDefaultBand()]);
@@ -102,6 +104,7 @@ export function useEqualizer() {
                         const bandsWithIds = profile.bands.map((b) => ({
                             ...b,
                             id: generateId(),
+                            enabled: b.enabled ?? true,
                         }));
                         setBands(bandsWithIds);
                         setPreamp(profile.preamp ?? 0);
@@ -234,10 +237,11 @@ export function useEqualizer() {
             try {
                 setIsLoading(true);
                 const profile = await tauri.loadProfile(name);
-                // Add IDs to loaded bands
+                // Add IDs to loaded bands (preserve enabled field, default to true if missing)
                 const bandsWithIds = profile.bands.map((b) => ({
                     ...b,
                     id: generateId(),
+                    enabled: b.enabled ?? true,
                 }));
 
                 const newPreamp = profile.preamp ?? 0;

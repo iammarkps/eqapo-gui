@@ -8,6 +8,7 @@ export interface ParametricBand {
     frequency: number;
     gain: number;
     q_factor: number;
+    enabled: boolean;
 }
 
 export interface EqProfile {

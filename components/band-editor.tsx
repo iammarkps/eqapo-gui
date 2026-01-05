@@ -4,6 +4,7 @@ import { useCallback, useState, useEffect } from "react";
 import { Slider } from "@/components/ui/slider";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Power } from "lucide-react";
 import type { ParametricBand, FilterType } from "@/lib/types";
 
 interface BandEditorProps {
@@ -50,6 +51,11 @@ export function BandEditor({
         onApply();
     }, [band.id, band.filter_type, onUpdate, onApply]);
 
+    const toggleEnabled = useCallback(() => {
+        onUpdate(band.id, { enabled: !band.enabled });
+        onApply();
+    }, [band.id, band.enabled, onUpdate, onApply]);
+
     const handleFreqBlur = () => {
         const value = parseFloat(freqInput);
         if (!isNaN(value) && value >= 20 && value <= 20000) {
@@ -71,16 +77,33 @@ export function BandEditor({
     };
 
     return (
-        <div className="flex flex-col bg-card border border-border rounded-lg p-4 w-[140px] shrink-0 gap-3">
-            {/* Header: Band number + Remove */}
+        <div className={`flex flex-col bg-card border border-border rounded-lg p-4 w-[140px] shrink-0 gap-3 transition-opacity ${!band.enabled ? "opacity-50" : ""}`}>
+            {/* Header: Band number + Toggle + Remove */}
             <div className="flex items-center justify-between">
                 <span className="text-xs text-muted-foreground font-medium">Band {index + 1}</span>
-                <button
-                    onClick={() => onRemove(band.id)}
-                    className="text-muted-foreground hover:text-destructive text-sm leading-none px-1"
-                >
-                    ×
-                </button>
+                <div className="flex items-center gap-1">
+                    <button
+                        type="button"
+                        onClick={toggleEnabled}
+                        className={`p-0.5 rounded transition-colors ${
+                            band.enabled
+                                ? "text-primary hover:text-primary/80"
+                                : "text-muted-foreground hover:text-foreground"
+                        }`}
+                        title={band.enabled ? "Disable band" : "Enable band"}
+                        aria-label={band.enabled ? "Disable band" : "Enable band"}
+                    >
+                        <Power className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => onRemove(band.id)}
+                        className="text-muted-foreground hover:text-destructive text-sm leading-none px-1"
+                        aria-label="Remove band"
+                    >
+                        ×
+                    </button>
+                </div>
             </div>
 
             {/* Filter Type */}

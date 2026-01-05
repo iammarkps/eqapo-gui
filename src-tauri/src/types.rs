@@ -30,6 +30,7 @@
 //!     frequency: 1000.0,
 //!     gain: 3.0,
 //!     q_factor: 1.41,
+//!     enabled: true,
 //! };
 //!
 //! let profile = EqProfile {
@@ -165,6 +166,7 @@ impl FilterType {
 ///     frequency: 100.0,
 ///     gain: 4.0,
 ///     q_factor: 0.71,
+///     enabled: true,
 /// };
 ///
 /// // Create a narrow cut to remove a resonance at 3.5 kHz
@@ -173,6 +175,7 @@ impl FilterType {
 ///     frequency: 3500.0,
 ///     gain: -6.0,
 ///     q_factor: 8.0,
+///     enabled: true,
 /// };
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -207,6 +210,14 @@ pub struct ParametricBand {
     ///
     /// For shelf filters, Q controls the transition slope steepness.
     pub q_factor: f32,
+
+    /// Whether this band is enabled (active) or disabled (bypassed).
+    ///
+    /// When `false`, the band is skipped during EAPO config generation
+    /// and has no effect on the audio output. This allows users to
+    /// temporarily disable bands without deleting them.
+    #[serde(default = "default_band_enabled")]
+    pub enabled: bool,
 }
 
 impl ParametricBand {
@@ -237,6 +248,7 @@ impl ParametricBand {
     ///     frequency: 1000.0,
     ///     gain: 3.5,
     ///     q_factor: 1.41,
+    ///     enabled: true,
     /// };
     ///
     /// assert_eq!(
@@ -308,6 +320,7 @@ impl ParametricBand {
 ///             frequency: 3000.0,
 ///             gain: 4.0,
 ///             q_factor: 1.0,
+///             enabled: true,
 ///         },
 ///     ],
 /// };
@@ -422,6 +435,15 @@ fn default_eq_enabled() -> bool {
     true
 }
 
+/// Default value provider for `ParametricBand::enabled` field during deserialization.
+///
+/// Returns `true` because individual bands should be enabled by default
+/// when loading profiles that don't have this field (backwards compatibility).
+#[inline]
+fn default_band_enabled() -> bool {
+    true
+}
+
 /// Creates a default set of EQ bands for new configurations.
 ///
 /// The default configuration provides a single neutral (0 dB) peaking filter
@@ -447,6 +469,7 @@ pub fn default_bands() -> Vec<ParametricBand> {
         frequency: 1000.0,
         gain: 0.0,
         q_factor: 1.41,
+        enabled: true,
     }]
 }
 

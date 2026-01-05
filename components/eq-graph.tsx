@@ -229,7 +229,7 @@ function drawCurveFill(
 // Hooks
 // =============================================================================
 
-/** Calculate frequency response for all bands */
+/** Calculate frequency response for all enabled bands */
 function useFrequencyResponse(
     bands: ParametricBand[],
     preamp: number,
@@ -243,14 +243,17 @@ function useFrequencyResponse(
             const freq = FREQUENCIES[i];
 
             for (const band of bands) {
-                totalDb += calcBiquadMagnitudeDb(
-                    freq,
-                    band.frequency,
-                    band.gain,
-                    band.q_factor,
-                    band.filter_type,
-                    sampleRate
-                );
+                // Only include enabled bands in the frequency response
+                if (band.enabled) {
+                    totalDb += calcBiquadMagnitudeDb(
+                        freq,
+                        band.frequency,
+                        band.gain,
+                        band.q_factor,
+                        band.filter_type,
+                        sampleRate
+                    );
+                }
             }
 
             response[i] = totalDb;
