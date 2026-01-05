@@ -83,6 +83,7 @@ export function BandEditor({
                 <span className="text-xs text-muted-foreground font-medium">Band {index + 1}</span>
                 <div className="flex items-center gap-1">
                     <button
+                        type="button"
                         onClick={toggleEnabled}
                         className={`p-0.5 rounded transition-colors ${
                             band.enabled
@@ -90,12 +91,15 @@ export function BandEditor({
                                 : "text-muted-foreground hover:text-foreground"
                         }`}
                         title={band.enabled ? "Disable band" : "Enable band"}
+                        aria-label={band.enabled ? "Disable band" : "Enable band"}
                     >
                         <Power className="h-3.5 w-3.5" />
                     </button>
                     <button
+                        type="button"
                         onClick={() => onRemove(band.id)}
                         className="text-muted-foreground hover:text-destructive text-sm leading-none px-1"
+                        aria-label="Remove band"
                     >
                         ×
                     </button>
