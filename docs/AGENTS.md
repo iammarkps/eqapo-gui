@@ -2,11 +2,47 @@
 
 This document describes specialized AI agents available for developing EQAPO GUI. These agents can be invoked through Claude Code to assist with specific development tasks.
 
-## Available Agents
+## Directory Structure
+
+EQAPO GUI uses two types of agents:
+
+```
+.claude/
+├── skills/              # Reusable domain expertise (SKILL.md format)
+│   ├── rust-code-reviewer/
+│   ├── tauri-ipc-developer/
+│   ├── audio-dsp-reviewer/
+│   ├── react-component-developer/
+│   ├── eqapo-format-expert/
+│   └── ab-testing-statistician/
+│
+└── agents/              # Task-focused sub-agents (custom .md format)
+    └── rust-reviewer.md
+```
+
+### Skills vs Sub-Agents
+
+| Aspect | Skills (`.claude/skills/`) | Sub-Agents (`.claude/agents/`) |
+|--------|---------------------------|-------------------------------|
+| **File Format** | `SKILL.md` with frontmatter | Any `.md` with frontmatter |
+| **Purpose** | Domain expertise & guidance | Task execution workers |
+| **Tools** | Inherits all tools | Explicit `tools:` field |
+| **Context** | Shared with main agent | Isolated context window |
+| **Can Load Skills** | N/A | Yes, via `skills:` field |
+| **Organization** | Rich (references/, scripts/) | Flat structure |
+
+**When to use Skills**: Reusable expertise across multiple workflows
+**When to use Sub-Agents**: Specific tasks with tool isolation or parallel execution
+
+---
+
+## Available Skills
 
 ### 1. Rust Code Reviewer (`rust-code-reviewer`)
 
 **Purpose**: Expert Rust code review for correctness, safety, idiomatic patterns, and performance.
+
+**Location**: `.claude/skills/rust-code-reviewer/`
 
 **When to Use**:
 - After implementing new Rust features in `src-tauri/`
@@ -15,7 +51,10 @@ This document describes specialized AI agents available for developing EQAPO GUI
 - To verify unsafe code patterns or borrow checker compliance
 - To optimize performance-critical audio processing code
 
-**Invocation**: Available as a skill in Claude Code
+**Invocation**:
+- Automatically loaded when reviewing Rust code
+- Manually: Mention "rust-code-reviewer" in conversation
+- Via sub-agent: Use `rust-reviewer` sub-agent which loads this skill
 
 **Focus Areas**:
 - Audio monitoring WASAPI code safety
@@ -26,9 +65,11 @@ This document describes specialized AI agents available for developing EQAPO GUI
 
 ---
 
-### 2. Tauri IPC Developer
+### 2. Tauri IPC Developer (`tauri-ipc-developer`)
 
 **Purpose**: Specialized agent for implementing type-safe IPC communication between React frontend and Rust backend.
+
+**Location**: `.claude/skills/tauri-ipc-developer/`
 
 **When to Use**:
 - Adding new Tauri commands (e.g., new profile operations, audio controls)
@@ -50,9 +91,11 @@ This document describes specialized AI agents available for developing EQAPO GUI
 
 ---
 
-### 3. Audio DSP Math Reviewer
+### 3. Audio DSP Reviewer (`audio-dsp-reviewer`)
 
 **Purpose**: Validate digital signal processing calculations, filter implementations, and frequency response accuracy.
+
+**Location**: `.claude/skills/audio-dsp-reviewer/`
 
 **When to Use**:
 - Modifying biquad filter coefficients (`lib/audio-math.ts`)
@@ -74,9 +117,11 @@ This document describes specialized AI agents available for developing EQAPO GUI
 
 ---
 
-### 4. React Component Developer
+### 4. React Component Developer (`react-component-developer`)
 
 **Purpose**: Implement and optimize React 19 components with modern patterns (Server Components, hooks, concurrent features).
+
+**Location**: `.claude/skills/react-component-developer/`
 
 **When to Use**:
 - Creating new UI components in `components/`
@@ -100,9 +145,11 @@ This document describes specialized AI agents available for developing EQAPO GUI
 
 ---
 
-### 5. EqualizerAPO Format Expert
+### 5. EqualizerAPO Format Expert (`eqapo-format-expert`)
 
 **Purpose**: Ensure correct parsing and generation of EqualizerAPO configuration files.
+
+**Location**: `.claude/skills/eqapo-format-expert/`
 
 **When to Use**:
 - Adding support for new EAPO filter types (Notch, Bandpass, etc.)
@@ -131,9 +178,11 @@ Filter: ON HS Fc 10000 Hz Gain 4.0 dB Q 0.71
 
 ---
 
-### 6. A/B Testing Statistician
+### 6. A/B Testing Statistician (`ab-testing-statistician`)
 
 **Purpose**: Validate statistical analysis in blind A/B/ABX testing, ensure proper randomization and p-value calculations.
+
+**Location**: `.claude/skills/ab-testing-statistician/`
 
 **When to Use**:
 - Modifying A/B test logic in `src-tauri/src/ab_test.rs`
@@ -155,88 +204,42 @@ Filter: ON HS Fc 10000 Hz Gain 4.0 dB Q 0.71
 
 ---
 
-### 7. Windows Audio Integration Specialist
+## Available Sub-Agents
 
-**Purpose**: Expert in WASAPI (Windows Audio Session API) for real-time audio monitoring and device management.
+### 1. Rust Reviewer (`rust-reviewer`)
 
-**When to Use**:
-- Debugging peak meter issues (`audio_monitor.rs`)
-- Adding new audio monitoring features (spectrum, RMS levels)
-- Implementing loopback recording
-- Handling audio device changes (hotplug, format changes)
-- Optimizing audio thread performance
+**Purpose**: Specialized code reviewer for EQAPO GUI's Rust backend with read-only access.
 
-**Key Files**:
-- `src-tauri/src/audio_monitor.rs` - WASAPI loopback capture
-- `components/audio-status-panel.tsx` - Peak meter UI
+**Location**: `.claude/agents/rust-reviewer.md`
 
-**Windows API Knowledge**:
-- IAudioClient, IAudioCaptureClient interfaces
-- WASAPI exclusive vs shared mode
-- Audio buffer management (lockless ring buffers)
-- Event-driven vs polling patterns
-- Sample format conversions (f32, i16, i24)
+**Loaded Skills**: `rust-code-reviewer`
 
----
-
-### 8. Profile Migration Agent
-
-**Purpose**: Handle backward compatibility and migration of profile formats across version updates.
+**Tools**: `Read, Grep, Glob` (read-only for safe auditing)
 
 **When to Use**:
-- Changing profile JSON schema
-- Adding new fields to `EqProfile` or `ParametricBand`
-- Migrating from v1 to v2 profile format
-- Supporting legacy profile imports
+- PR reviews for Rust code changes
+- Pre-commit safety checks
+- Bug investigation in backend modules
+- Auditing specific files for issues
 
-**Key Files**:
-- `src-tauri/src/profile.rs` - Profile serialization
-- `src-tauri/src/types.rs` - Data structures
+**Project Focus**:
+- **Tauri IPC correctness** - Command handlers, type sync with TypeScript
+- **WASAPI safety** - COM initialization, memory leaks in audio_monitor.rs
+- **File I/O patterns** - Profile management, permission checks
+- **Concurrency** - Async patterns, mutex usage, deadlock prevention
 
-**Migration Strategies**:
-- Schema versioning (`"schema_version": 2`)
-- Default value fallbacks for missing fields
-- Deprecation warnings for old formats
-- Automated batch migration tool
+**Invocation Examples**:
+```
+"Review the changes in src-tauri/src/commands.rs"
+"Check all Rust files for safety issues"
+"Audit audio_monitor.rs for memory leaks"
+```
 
----
-
-### 9. UI/UX Accessibility Auditor
-
-**Purpose**: Ensure EQAPO GUI meets WCAG 2.1 accessibility standards.
-
-**When to Use**:
-- Before major UI releases
-- Adding keyboard shortcuts
-- Implementing screen reader support
-- Ensuring color contrast compliance
-- Testing with assistive technologies
-
-**Key Areas**:
-- Slider keyboard navigation (arrow keys)
-- Focus management in dialogs
-- ARIA labels for canvas elements (EQ graph)
-- Color-blind friendly peak meters
-- High contrast mode support
-
----
-
-### 10. Documentation Agent
-
-**Purpose**: Maintain and update project documentation, API references, and user guides.
-
-**When to Use**:
-- After adding new features
-- Updating build instructions
-- Documenting Tauri commands
-- Writing troubleshooting guides
-- Creating release notes
-
-**Documentation Files**:
-- `README.md` - Main project overview
-- `CLAUDE.md` - Development guide
-- `docs/VERSIONING.md` - Release workflow
-- `docs/AGENTS.md` - This file
+**Output Format**:
+- Critical Issues ⚠️ - Must fix before merge
+- Important Improvements 🔧 - Should fix
+- Suggestions 💡 - Nice-to-have
+- Positive Findings ✅ - Good practices
 
 ---
 
@@ -273,22 +276,75 @@ Be explicit about what the agent should do:
 
 ## Creating New Agents
 
-To add a project-specific agent:
+### Creating a New Skill
 
-1. **Create skill directory**: `.claude/skills/my-agent/`
-2. **Add SKILL.md**: Define purpose, instructions, examples
-3. **Add references**: Relevant documentation, code samples
-4. **Update this file**: Document the new agent
+For reusable domain expertise:
 
-Example structure:
+1. **Create skill directory**: `.claude/skills/my-skill/`
+2. **Add SKILL.md** with frontmatter:
+   ```markdown
+   ---
+   name: my-skill
+   description: When to use this skill
+   ---
+
+   # Skill Title
+
+   [Detailed instructions...]
+   ```
+3. **Add references** (optional): Documentation in `references/` subdirectory
+4. **Update this file**: Document the new skill
+
+**Example structure**:
 ```
-.claude/skills/my-agent/
-├── SKILL.md               # Agent instructions
-├── references/
+.claude/skills/my-skill/
+├── SKILL.md               # Required: Skill instructions
+├── references/            # Optional: Supporting docs
 │   ├── api_docs.md
 │   └── examples.md
-└── test_cases/
-    └── scenarios.md
+└── scripts/               # Optional: Helper scripts
+    └── validate.py
+```
+
+### Creating a New Sub-Agent
+
+For task-focused execution with tool isolation:
+
+1. **Create agent file**: `.claude/agents/my-agent.md`
+2. **Add frontmatter** with tools and skills:
+   ```markdown
+   ---
+   name: my-agent
+   description: When to invoke this agent
+   tools: Read, Write, Edit, Bash
+   skills: skill-1, skill-2
+   model: sonnet
+   ---
+
+   # Agent System Prompt
+
+   [Task-specific instructions...]
+   ```
+3. **Specify tools**: Only grant necessary tools for security
+4. **Load skills**: Reference existing skills for domain expertise
+5. **Update this file**: Document the new sub-agent
+
+**Common Tool Configurations**:
+- **Read-only reviewers**: `tools: Read, Grep, Glob`
+- **Code writers**: `tools: Read, Write, Edit, Bash, Glob, Grep`
+- **Researchers**: `tools: Read, Grep, Glob, WebFetch, WebSearch`
+
+**Example sub-agent**:
+```markdown
+---
+name: security-auditor
+description: Audit code for security vulnerabilities
+tools: Read, Grep, Glob
+skills: rust-code-reviewer
+model: sonnet
+---
+
+Review code for OWASP Top 10 vulnerabilities...
 ```
 
 ---
@@ -297,25 +353,25 @@ Example structure:
 
 ### Adding a New Feature
 
-1. **Plan Agent**: Explore codebase, design approach
-2. **React Component Developer**: Implement UI
-3. **Tauri IPC Developer**: Add backend commands
-4. **Rust Code Reviewer**: Review Rust implementation
-5. **Documentation Agent**: Update README and user guide
+1. **Explore Agent**: Search codebase for relevant files
+2. **React Component Developer** (skill): Implement UI
+3. **Tauri IPC Developer** (skill): Add backend commands
+4. **Rust Reviewer** (sub-agent): Review Rust implementation
+5. Update documentation
 
 ### Fixing a Bug
 
 1. **Explore Agent**: Locate bug in codebase
-2. **Specialist Agent**: Implement fix (based on area)
-3. **Test Runner**: Verify fix with unit/integration tests
-4. **Code Reviewer**: Ensure no regressions
+2. **Relevant Skill**: Implement fix (tauri-ipc-developer, react-component-developer, etc.)
+3. Run tests: `bun run test`
+4. **Rust Reviewer** (sub-agent): Review for regressions
 
 ### Performance Optimization
 
-1. **Audio DSP Math Reviewer**: Identify bottlenecks
-2. **Rust Code Reviewer**: Optimize hot paths
-3. **React Component Developer**: Reduce re-renders
-4. **Benchmark Agent**: Measure improvements
+1. **Audio DSP Reviewer** (skill): Identify DSP bottlenecks
+2. **Rust Reviewer** (sub-agent): Optimize hot paths in Rust
+3. **React Component Developer** (skill): Reduce re-renders
+4. Benchmark and measure improvements
 
 ---
 
@@ -327,4 +383,4 @@ For questions about using agents or requesting new specialized agents:
 
 ---
 
-*Last updated: 2026-01-04*
+*Last updated: 2026-01-05*
