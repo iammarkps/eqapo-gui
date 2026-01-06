@@ -12,6 +12,14 @@ use crate::tray::update_tray_menu;
 use crate::types::{AppSettings, AppState, EqProfile, ParametricBand};
 
 // =============================================================================
+// Constants
+// =============================================================================
+
+/// Windows flag to prevent console window from appearing when running icacls
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+// =============================================================================
 // Directory and Path Utilities
 // =============================================================================
 
@@ -179,7 +187,6 @@ fn ensure_regular_file(path: &Path) -> Result<(), String> {
 #[cfg(windows)]
 fn run_icacls_grant(path: &Path, grant: &str) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x08000000;
 
     let output = std::process::Command::new("icacls")
         .arg(path)

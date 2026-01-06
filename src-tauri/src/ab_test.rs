@@ -5,6 +5,22 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{load_profile, EqProfile};
 
+// =============================================================================
+// Constants
+// =============================================================================
+
+/// Fallback seed value when system time is unavailable
+const FALLBACK_SEED: u64 = 42;
+
+/// P-value threshold for highly distinguishable result (p < 0.01)
+const P_VALUE_HIGHLY_SIGNIFICANT: f64 = 0.01;
+
+/// P-value threshold for likely distinguishable result (p < 0.05)
+const P_VALUE_LIKELY_SIGNIFICANT: f64 = 0.05;
+
+/// P-value threshold for possibly distinguishable result (p < 0.10)
+const P_VALUE_POSSIBLY_SIGNIFICANT: f64 = 0.1;
+
 /// Test mode for A/B comparison
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -115,7 +131,7 @@ impl ABSession {
         let seed = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos() as u64)
-            .unwrap_or(42);
+            .unwrap_or(FALLBACK_SEED);
 
         let mut rng = StdRng::seed_from_u64(seed);
 
@@ -284,11 +300,11 @@ impl ABSession {
             binomial_p_value(max_pref, total, 0.5)
         };
 
-        let verdict = if p_value < 0.01 {
+        let verdict = if p_value < P_VALUE_HIGHLY_SIGNIFICANT {
             "Highly distinguishable (p < 0.01)".to_string()
-        } else if p_value < 0.05 {
+        } else if p_value < P_VALUE_LIKELY_SIGNIFICANT {
             "Likely distinguishable (p < 0.05)".to_string()
-        } else if p_value < 0.1 {
+        } else if p_value < P_VALUE_POSSIBLY_SIGNIFICANT {
             "Possibly distinguishable (p < 0.10)".to_string()
         } else {
             "Not distinguishable (p ≥ 0.10)".to_string()

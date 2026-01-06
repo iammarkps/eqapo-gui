@@ -37,6 +37,68 @@ const DEVICE_CHANGE_ERROR_THRESHOLD: u32 = 10;
 /// Delay before attempting to reconnect after device change
 const DEVICE_RECONNECT_DELAY: Duration = Duration::from_millis(500);
 
+// COM initialization result codes
+/// S_FALSE - COM already initialized (acceptable)
+const COM_S_FALSE: u32 = 1;
+
+/// RPC_E_CHANGED_MODE - COM initialized with different threading model (acceptable)
+const COM_RPC_E_CHANGED_MODE: u32 = 0x80010106;
+
+// PROPVARIANT / BLOB constants
+/// VT_BLOB variant type identifier
+const VT_BLOB: u16 = 65;
+
+/// Offset to BLOB cbSize field in PROPVARIANT structure
+const PROPVARIANT_BLOB_SIZE_OFFSET: usize = 8;
+
+/// Offset to BLOB pBlobData pointer in PROPVARIANT structure (64-bit)
+const PROPVARIANT_BLOB_DATA_OFFSET: usize = 16;
+
+// WAVE_FORMAT constants
+/// WAVE_FORMAT_PCM - Standard PCM audio format
+const WAVE_FORMAT_PCM: u16 = 1;
+
+/// WAVE_FORMAT_IEEE_FLOAT - 32-bit IEEE float audio format
+const WAVE_FORMAT_IEEE_FLOAT: u16 = 3;
+
+/// WAVE_FORMAT_EXTENSIBLE - Extended format with SubFormat GUID
+const WAVE_FORMAT_EXTENSIBLE: u16 = 0xFFFE;
+
+// Audio sample format constants
+/// Bytes per sample for 16-bit PCM audio
+const BYTES_PER_SAMPLE_16BIT: u16 = 2;
+
+/// Bytes per sample for 24-bit PCM audio
+const BYTES_PER_SAMPLE_24BIT: u16 = 3;
+
+/// Bytes per sample for 32-bit audio (PCM or float)
+const BYTES_PER_SAMPLE_32BIT: u16 = 4;
+
+/// Maximum value for 16-bit signed PCM samples (normalization divisor)
+const PCM_16BIT_MAX: f32 = 32768.0;
+
+/// Maximum value for 32-bit signed PCM samples (normalization divisor)
+const PCM_32BIT_MAX: f32 = 2147483648.0;
+
+/// Bits per byte
+const BITS_PER_BYTE: u16 = 8;
+
+/// Bit shift amount for first byte in 24-bit PCM unpacking
+const BIT_SHIFT_24BIT_BYTE0: i32 = 8;
+
+/// Bit shift amount for second byte in 24-bit PCM unpacking
+const BIT_SHIFT_24BIT_BYTE1: i32 = 16;
+
+/// Bit shift amount for third byte in 24-bit PCM unpacking
+const BIT_SHIFT_24BIT_BYTE2: i32 = 24;
+
+// dB conversion constants
+/// Multiplier for linear to dB conversion (20 * log10)
+const DB_CONVERSION_FACTOR: f32 = 20.0;
+
+/// dB value representing silence (when peak is 0.0)
+const DB_SILENCE_THRESHOLD: f32 = -100.0;
+
 use windows::Win32::Media::Audio::{
     eConsole, eRender, IAudioCaptureClient, IAudioClient, IMMDevice, IMMDeviceEnumerator,
     MMDeviceEnumerator, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK, WAVEFORMATEX,
@@ -153,8 +215,8 @@ impl AudioMonitor {
         let hr = CoInitializeEx(None, COINIT_MULTITHREADED);
         if hr.is_err() {
             let code = hr.0 as u32;
-            // S_FALSE = 1, RPC_E_CHANGED_MODE = 0x80010106
-            if code != 1 && code != 0x80010106 {
+            // Accept S_FALSE (already initialized) and RPC_E_CHANGED_MODE (different threading model)
+            if code != COM_S_FALSE && code != COM_RPC_E_CHANGED_MODE {
                 return Err(format!("COM initialization failed: HRESULT 0x{:08X}", code));
             }
         }
@@ -239,18 +301,17 @@ impl AudioMonitor {
         // Total offset to blob: 8 bytes, pBlobData at offset 12 (32-bit) or 16 (64-bit)
         let propvar_ptr = &prop as *const _ as *const u8;
 
-        // Read vt to check it's VT_BLOB (65)
+        // Read vt to check it's VT_BLOB
         let vt = *(propvar_ptr as *const u16);
-        if vt != 65 {
-            // VT_BLOB = 0x41 = 65
+        if vt != VT_BLOB {
             return Err(format!("Property is not VT_BLOB, got vt={}", vt));
         }
 
         // SAFETY: Read cbSize at offset 8, then pBlobData at offset 16 (64-bit aligned).
         // The BLOB struct is { cbSize: ULONG (4 bytes), pBlobData: *mut u8 }.
         // On 64-bit, pBlobData is pointer-aligned so it's at offset 8 + 8 = 16.
-        let cb_size = *((propvar_ptr.add(8)) as *const u32);
-        let blob_data = *((propvar_ptr.add(16)) as *const *const u8);
+        let cb_size = *((propvar_ptr.add(PROPVARIANT_BLOB_SIZE_OFFSET)) as *const u32);
+        let blob_data = *((propvar_ptr.add(PROPVARIANT_BLOB_DATA_OFFSET)) as *const *const u8);
 
         if blob_data.is_null() || cb_size < std::mem::size_of::<WAVEFORMATEX>() as u32 {
             return Err("Invalid format blob".to_string());
@@ -334,11 +395,10 @@ impl AudioMonitor {
     }
 
     fn get_format_details(&self, format: &WAVEFORMATEX) -> (u16, String) {
-        // WAVE_FORMAT_PCM = 1, WAVE_FORMAT_IEEE_FLOAT = 3, WAVE_FORMAT_EXTENSIBLE = 0xFFFE
         match format.wFormatTag {
-            1 => (format.wBitsPerSample, "PCM".to_string()),
-            3 => (format.wBitsPerSample, "IEEE Float".to_string()),
-            0xFFFE => {
+            WAVE_FORMAT_PCM => (format.wBitsPerSample, "PCM".to_string()),
+            WAVE_FORMAT_IEEE_FLOAT => (format.wBitsPerSample, "IEEE Float".to_string()),
+            WAVE_FORMAT_EXTENSIBLE => {
                 // Extensible format - look at SubFormat
                 // Use raw pointer to avoid unaligned reference issues with packed struct
                 let ext_ptr = format as *const WAVEFORMATEX as *const WAVEFORMATEXTENSIBLE;
@@ -400,9 +460,9 @@ impl AudioMonitor {
         let state = self.peak_state.lock();
         let peak_linear = state.current_peak;
         let peak_db = if peak_linear > 0.0 {
-            20.0 * peak_linear.log10()
+            DB_CONVERSION_FACTOR * peak_linear.log10()
         } else {
-            -100.0
+            DB_SILENCE_THRESHOLD
         };
 
         PeakMeterUpdate {
@@ -442,7 +502,7 @@ unsafe fn calculate_peak_from_buffer(
 ) -> f32 {
     let mut max_sample = 0.0f32;
 
-    if is_float && bytes_per_sample == 4 {
+    if is_float && bytes_per_sample == BYTES_PER_SAMPLE_32BIT {
         // 32-bit IEEE float
         let samples = std::slice::from_raw_parts(buffer_ptr as *const f32, sample_count);
         for &s in samples {
@@ -451,36 +511,36 @@ unsafe fn calculate_peak_from_buffer(
                 max_sample = abs;
             }
         }
-    } else if bytes_per_sample == 2 {
+    } else if bytes_per_sample == BYTES_PER_SAMPLE_16BIT {
         // 16-bit PCM
         let samples = std::slice::from_raw_parts(buffer_ptr as *const i16, sample_count);
         for &s in samples {
-            let normalized = (s as f32) / 32768.0;
+            let normalized = (s as f32) / PCM_16BIT_MAX;
             let abs = normalized.abs();
             if abs > max_sample {
                 max_sample = abs;
             }
         }
-    } else if bytes_per_sample == 3 {
+    } else if bytes_per_sample == BYTES_PER_SAMPLE_24BIT {
         // 24-bit PCM (packed as 3 bytes per sample)
-        let data = std::slice::from_raw_parts(buffer_ptr, sample_count * 3);
+        let data = std::slice::from_raw_parts(buffer_ptr, sample_count * BYTES_PER_SAMPLE_24BIT as usize);
         for i in 0..sample_count {
-            let offset = i * 3;
+            let offset = i * BYTES_PER_SAMPLE_24BIT as usize;
             // Sign-extend 24-bit to 32-bit by shifting to top of i32
-            let sample_i32 = ((data[offset] as i32) << 8)
-                | ((data[offset + 1] as i32) << 16)
-                | ((data[offset + 2] as i32) << 24);
-            let normalized = (sample_i32 as f32) / 2147483648.0;
+            let sample_i32 = ((data[offset] as i32) << BIT_SHIFT_24BIT_BYTE0)
+                | ((data[offset + 1] as i32) << BIT_SHIFT_24BIT_BYTE1)
+                | ((data[offset + 2] as i32) << BIT_SHIFT_24BIT_BYTE2);
+            let normalized = (sample_i32 as f32) / PCM_32BIT_MAX;
             let abs = normalized.abs();
             if abs > max_sample {
                 max_sample = abs;
             }
         }
-    } else if bytes_per_sample == 4 && !is_float {
+    } else if bytes_per_sample == BYTES_PER_SAMPLE_32BIT && !is_float {
         // 32-bit PCM integer
         let samples = std::slice::from_raw_parts(buffer_ptr as *const i32, sample_count);
         for &s in samples {
-            let normalized = (s as f32) / 2147483648.0;
+            let normalized = (s as f32) / PCM_32BIT_MAX;
             let abs = normalized.abs();
             if abs > max_sample {
                 max_sample = abs;
@@ -515,8 +575,8 @@ where
     let hr = CoInitializeEx(None, COINIT_MULTITHREADED);
     if hr.is_err() {
         let code = hr.0 as u32;
-        // S_FALSE = 1, RPC_E_CHANGED_MODE = 0x80010106
-        if code != 1 && code != 0x80010106 {
+        // Accept S_FALSE (already initialized) and RPC_E_CHANGED_MODE (different threading model)
+        if code != COM_S_FALSE && code != COM_RPC_E_CHANGED_MODE {
             return Err(format!("COM initialization failed: HRESULT 0x{:08X}", code));
         }
     }
@@ -579,13 +639,12 @@ where
 
     // SAFETY: format_ptr is valid, returned by GetMixFormat.
     let format = &*format_ptr;
-    let bytes_per_sample = format.wBitsPerSample / 8;
+    let bytes_per_sample = format.wBitsPerSample / BITS_PER_BYTE;
     let channels = format.nChannels as usize;
 
     // SAFETY: Check if format is IEEE float by examining wFormatTag or SubFormat GUID.
-    // WAVE_FORMAT_IEEE_FLOAT = 3, WAVE_FORMAT_EXTENSIBLE = 0xFFFE
-    let is_float = format.wFormatTag == 3
-        || (format.wFormatTag == 0xFFFE && {
+    let is_float = format.wFormatTag == WAVE_FORMAT_IEEE_FLOAT
+        || (format.wFormatTag == WAVE_FORMAT_EXTENSIBLE && {
             let ext_ptr = format_ptr as *const WAVEFORMATEXTENSIBLE;
             let float_guid = windows::core::GUID::from_u128(0x00000003_0000_0010_8000_00aa00389b71);
             // Use read_unaligned because WAVEFORMATEXTENSIBLE may not be properly aligned
@@ -693,9 +752,9 @@ where
                 let state = peak_state.lock();
                 let peak_linear = state.current_peak;
                 let peak_db = if peak_linear > 0.0 {
-                    20.0 * peak_linear.log10()
+                    DB_CONVERSION_FACTOR * peak_linear.log10()
                 } else {
-                    -100.0
+                    DB_SILENCE_THRESHOLD
                 };
 
                 callback(PeakMeterUpdate {

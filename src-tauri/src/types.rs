@@ -51,6 +51,19 @@ use crate::audio_monitor::AudioMonitor;
 
 use crate::ab_test::ABSession;
 
+// =============================================================================
+// Constants
+// =============================================================================
+
+/// Default frequency for new EQ bands (1 kHz)
+const DEFAULT_BAND_FREQUENCY: f32 = 1000.0;
+
+/// Default gain for new EQ bands (0 dB - no change)
+const DEFAULT_BAND_GAIN: f32 = 0.0;
+
+/// Default Q factor for new EQ bands (approximately 1 octave bandwidth)
+const DEFAULT_BAND_Q_FACTOR: f32 = 1.41;
+
 /// Filter types supported by EqualizerAPO.
 ///
 /// These correspond to the standard [biquad filter] types used in parametric equalizers.
@@ -466,9 +479,9 @@ fn default_band_enabled() -> bool {
 pub fn default_bands() -> Vec<ParametricBand> {
     vec![ParametricBand {
         filter_type: FilterType::Peaking,
-        frequency: 1000.0,
-        gain: 0.0,
-        q_factor: 1.41,
+        frequency: DEFAULT_BAND_FREQUENCY,
+        gain: DEFAULT_BAND_GAIN,
+        q_factor: DEFAULT_BAND_Q_FACTOR,
         enabled: true,
     }]
 }
