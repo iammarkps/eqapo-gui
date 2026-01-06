@@ -1,5 +1,4 @@
-import type { ParametricBand } from "./types";
-import { SyncStatus } from "./use-equalizer";
+import type { ParametricBand, SyncState } from "./types";
 import * as tauri from "./tauri";
 
 export function generateId(): string {
@@ -48,8 +47,7 @@ export function handleImportProfile(
     setBands: (bands: ParametricBand[]) => void,
     setPreamp: (preamp: number) => void,
     setCurrentProfile: (name: string) => void,
-    setSyncStatus: (status: SyncStatus) => void,
-    setError: (error: string | null) => void,
+    setSyncState: (state: SyncState) => void,
     preamp: number,
     configPath?: string | null
 ) {
@@ -90,13 +88,14 @@ export function handleImportProfile(
             }
 
             // Auto-apply imported settings
-            setSyncStatus("syncing");
+            setSyncState({ status: "syncing" });
             await tauri.applyProfile(importedBands, data.preamp ?? preamp, configPath);
-            setSyncStatus("synced");
-            setError(null);
+            setSyncState({ status: "synced" });
         } catch (err) {
-            setError(`Import failed: ${err}`);
-            setSyncStatus("error");
+            setSyncState({
+                status: "error",
+                message: err instanceof Error ? err.message : "Import failed"
+            });
         }
     };
 
@@ -145,8 +144,7 @@ export async function handleExportTxt(
 export function handleImportTxt(
     setBands: (bands: ParametricBand[]) => void,
     setPreamp: (preamp: number) => void,
-    setSyncStatus: (status: SyncStatus) => void,
-    setError: (error: string | null) => void
+    setSyncState: (state: SyncState) => void
 ) {
     const input = document.createElement("input");
     input.type = "file";
@@ -200,15 +198,16 @@ export function handleImportTxt(
             if (bands.length > 0) {
                 setBands(bands);
                 setPreamp(newPreamp);
-                setSyncStatus("pending"); // Let the hook implementation handle the sync
-                setError(null);
+                setSyncState({ status: "pending" }); // Let the hook implementation handle the sync
             } else {
                 throw new Error("No valid filters found in file");
             }
 
         } catch (err) {
-            setError(`Import failed: ${err}`);
-            setSyncStatus("error");
+            setSyncState({
+                status: "error",
+                message: err instanceof Error ? err.message : "Import failed"
+            });
         }
     };
 

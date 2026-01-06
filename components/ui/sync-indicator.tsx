@@ -1,6 +1,6 @@
 "use client";
 
-import { SyncStatus } from "@/lib/use-equalizer";
+import type { SyncStatus } from "@/lib/types";
 
 interface SyncIndicatorProps {
     status: SyncStatus;

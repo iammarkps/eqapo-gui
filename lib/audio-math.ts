@@ -1,17 +1,33 @@
 // Audio mathematics utility functions
+import type { ParametricBand } from "./types";
+
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+
+// Frequency range constants (human hearing range)
+const MIN_AUDIBLE_FREQUENCY_HZ = 20;
+const MAX_AUDIBLE_FREQUENCY_HZ = 20000;
+
+// Graph resolution
+const FREQUENCY_GRAPH_POINTS = 200;
+
+// Audio DSP constants
+const DEFAULT_SAMPLE_RATE_HZ = 48000;
+const DB_TO_LINEAR_DIVISOR = 40; // Divisor for converting dB to linear amplitude in biquad filters
 
 // Pre-compute log frequency points (20Hz - 20kHz) - FAST lookup
-const NUM_POINTS = 200;
-const LOG_FREQ_MIN = Math.log10(20);
-const LOG_FREQ_MAX = Math.log10(20000);
+const LOG_MIN_FREQUENCY = Math.log10(MIN_AUDIBLE_FREQUENCY_HZ);
+const LOG_MAX_FREQUENCY = Math.log10(MAX_AUDIBLE_FREQUENCY_HZ);
 
 export const FREQUENCIES: number[] = [];
-for (let i = 0; i < NUM_POINTS; i++) {
-    const logFreq = LOG_FREQ_MIN + (i / (NUM_POINTS - 1)) * (LOG_FREQ_MAX - LOG_FREQ_MIN);
+for (let i = 0; i < FREQUENCY_GRAPH_POINTS; i++) {
+    const logFreq = LOG_MIN_FREQUENCY + (i / (FREQUENCY_GRAPH_POINTS - 1)) * (LOG_MAX_FREQUENCY - LOG_MIN_FREQUENCY);
     FREQUENCIES.push(Math.pow(10, logFreq));
 }
 
-export { NUM_POINTS, LOG_FREQ_MIN, LOG_FREQ_MAX };
+// Export constants for external use
+export { FREQUENCY_GRAPH_POINTS as NUM_POINTS, LOG_MIN_FREQUENCY as LOG_FREQ_MIN, LOG_MAX_FREQUENCY as LOG_FREQ_MAX };
 
 /**
  * Normalizes filter type string to internal canonical types
@@ -25,8 +41,19 @@ function normalizeFilterType(type: string): "peaking" | "lowshelf" | "highshelf"
 }
 
 /**
- * Calculates the magnitude response (in dB) of a biquad filter at a specific frequency
- * Strict RBJ / EqualizerAPO implementation
+ * Calculates the magnitude response (in dB) of a biquad filter at a specific frequency.
+ *
+ * Implements the RBJ Audio EQ Cookbook formulas for peaking, low shelf, and high shelf filters.
+ *
+ * @param freq - The frequency to evaluate (Hz)
+ * @param fc - The filter center frequency (Hz)
+ * @param gainDb - The filter gain in decibels
+ * @param q - The quality factor (bandwidth)
+ * @param filterTypeStr - Filter type: "peaking", "lowshelf", or "highshelf"
+ * @param sampleRate - Audio sample rate (defaults to 48kHz)
+ * @returns The magnitude response in dB
+ *
+ * @see https://webaudio.github.io/Audio-EQ-Cookbook/audio-eq-cookbook.html
  */
 export function calcBiquadMagnitudeDb(
     freq: number,
@@ -34,15 +61,15 @@ export function calcBiquadMagnitudeDb(
     gainDb: number,
     q: number,
     filterTypeStr: string,
-    sampleRate: number = 48000
+    sampleRate: number = DEFAULT_SAMPLE_RATE_HZ
 ): number {
-    // 1. Clamp frequencies to Nyquist
+    // 1. Clamp frequencies to Nyquist limit
     const safeFc = Math.max(1, Math.min(fc, sampleRate / 2 - 1));
     const safeFreq = Math.max(0, Math.min(freq, sampleRate / 2));
 
     const w0 = (2 * Math.PI * safeFc) / sampleRate;
     const w = (2 * Math.PI * safeFreq) / sampleRate;
-    const A = Math.pow(10, gainDb / 40);
+    const A = Math.pow(10, gainDb / DB_TO_LINEAR_DIVISOR);
     const cosW0 = Math.cos(w0);
     const sinW0 = Math.sin(w0);
     const filterType = normalizeFilterType(filterTypeStr);
@@ -108,9 +135,17 @@ export function calcBiquadMagnitudeDb(
 }
 
 /**
- * Calculates the maximum peak gain across the frequency spectrum
+ * Calculates the maximum peak gain across the frequency spectrum.
+ *
+ * Iterates through all audible frequencies and sums the magnitude response
+ * of all bands plus preamp to find the maximum gain point.
+ *
+ * @param bands - Array of parametric EQ bands
+ * @param preamp - Preamp gain in dB
+ * @param sampleRate - Audio sample rate (defaults to 48kHz)
+ * @returns The maximum peak gain in dB (rounded to 1 decimal place)
  */
-export function calculatePeakGain(bands: any[], preamp: number, sampleRate: number = 48000): number {
+export function calculatePeakGain(bands: ParametricBand[], preamp: number, sampleRate: number = DEFAULT_SAMPLE_RATE_HZ): number {
     let maxDb = -Infinity;
 
     for (const freq of FREQUENCIES) {

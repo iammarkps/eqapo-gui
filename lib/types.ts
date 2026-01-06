@@ -2,6 +2,25 @@
 
 export type FilterType = 'peaking' | 'lowshelf' | 'highshelf';
 
+// ============================================================================
+// Sync State (Discriminated Union)
+// ============================================================================
+
+/**
+ * Represents the synchronization state between the UI and EqualizerAPO.
+ * Uses a discriminated union to ensure type-safe error handling.
+ */
+export type SyncState =
+    | { status: "synced" }
+    | { status: "syncing" }
+    | { status: "pending" }
+    | { status: "error"; message: string };
+
+/**
+ * Type alias for just the sync status (for components that only need the status string).
+ */
+export type SyncStatus = SyncState["status"];
+
 export interface ParametricBand {
     id: string;
     filter_type: FilterType;

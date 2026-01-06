@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
-import type { ParametricBand } from "@/lib/types";
+import type { ParametricBand, SyncState } from "@/lib/types";
 import * as tauri from "@/lib/tauri";
 import { generateId, handleExportProfile, handleImportProfile, handleExportTxt, handleImportTxt } from "./file-io";
 
@@ -16,16 +16,13 @@ function createDefaultBand(): ParametricBand {
     };
 }
 
-export type SyncStatus = "synced" | "syncing" | "pending" | "error";
-
 export function useEqualizer() {
     const [bands, setBands] = useState<ParametricBand[]>([createDefaultBand()]);
     const [preamp, setPreamp] = useState(0);
     const [profiles, setProfiles] = useState<string[]>([]);
     const [currentProfile, setCurrentProfile] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [syncStatus, setSyncStatus] = useState<SyncStatus>("synced");
+    const [syncState, setSyncState] = useState<SyncState>({ status: "synced" });
     const [configPath, setConfigPath] = useState<string | null>(null);
     const [eqEnabled, setEqEnabled] = useState(true);
 
@@ -64,9 +61,13 @@ export function useEqualizer() {
                     settings.config_path,
                     settings.eq_enabled ?? true
                 );
-                setSyncStatus("synced");
+                setSyncState({ status: "synced" });
             } catch (e) {
                 console.error("Failed to load settings from backend:", e);
+                setSyncState({
+                    status: "error",
+                    message: e instanceof Error ? e.message : "Failed to load settings"
+                });
             }
         };
 
@@ -106,9 +107,13 @@ export function useEqualizer() {
                         setBands(bandsWithIds);
                         setPreamp(profile.preamp ?? 0);
                         setCurrentProfile(profileName);
-                        setSyncStatus("synced");
+                        setSyncState({ status: "synced" });
                     } catch (e) {
                         console.error("Failed to sync profile from tray:", e);
+                        setSyncState({
+                            status: "error",
+                            message: e instanceof Error ? e.message : "Failed to sync profile from tray"
+                        });
                     }
                 });
             } catch (e) {
@@ -165,19 +170,20 @@ export function useEqualizer() {
     // Debounced apply - updates live config after 250ms of no changes
     const debouncedApply = useCallback((bandsToApply: ParametricBand[], preampValue: number, enabled?: boolean) => {
         const isEnabled = enabled ?? eqEnabled;
-        setSyncStatus("pending");
+        setSyncState({ status: "pending" });
         if (applyTimeoutRef.current) {
             clearTimeout(applyTimeoutRef.current);
         }
         applyTimeoutRef.current = setTimeout(async () => {
             try {
-                setSyncStatus("syncing");
+                setSyncState({ status: "syncing" });
                 await tauri.applyProfile(bandsToApply, preampValue, configPath, isEnabled);
-                setSyncStatus("synced");
-                setError(null);
+                setSyncState({ status: "synced" });
             } catch (e) {
-                setSyncStatus("error");
-                setError(String(e));
+                setSyncState({
+                    status: "error",
+                    message: e instanceof Error ? e.message : "Failed to apply profile"
+                });
             }
         }, 250);
     }, [configPath, eqEnabled]);
@@ -185,13 +191,14 @@ export function useEqualizer() {
     // Force sync immediately
     const forceSync = useCallback(async () => {
         try {
-            setSyncStatus("syncing");
+            setSyncState({ status: "syncing" });
             await tauri.applyProfile(bands, preamp, configPath, eqEnabled);
-            setSyncStatus("synced");
-            setError(null);
+            setSyncState({ status: "synced" });
         } catch (e) {
-            setSyncStatus("error");
-            setError(String(e));
+            setSyncState({
+                status: "error",
+                message: e instanceof Error ? e.message : "Failed to sync"
+            });
         }
     }, [bands, preamp, configPath, eqEnabled]);
 
@@ -200,13 +207,14 @@ export function useEqualizer() {
         const newEnabled = !eqEnabled;
         setEqEnabled(newEnabled);
         try {
-            setSyncStatus("syncing");
+            setSyncState({ status: "syncing" });
             await tauri.applyProfile(bands, preamp, configPath, newEnabled);
-            setSyncStatus("synced");
-            setError(null);
+            setSyncState({ status: "synced" });
         } catch (e) {
-            setSyncStatus("error");
-            setError(String(e));
+            setSyncState({
+                status: "error",
+                message: e instanceof Error ? e.message : "Failed to toggle EQ"
+            });
         }
     }, [eqEnabled, bands, preamp, configPath]);
 
@@ -219,9 +227,12 @@ export function useEqualizer() {
                 // Sync with backend tray state
                 await tauri.setCurrentProfile(name);
                 await refreshProfiles();
-                setError(null);
+                setSyncState({ status: "synced" });
             } catch (e) {
-                setError(String(e));
+                setSyncState({
+                    status: "error",
+                    message: e instanceof Error ? e.message : "Failed to save profile"
+                });
             } finally {
                 setIsLoading(false);
             }
@@ -250,18 +261,19 @@ export function useEqualizer() {
                 await tauri.setCurrentProfile(name);
 
                 // Auto-apply when loading
-                setSyncStatus("syncing");
+                setSyncState({ status: "syncing" });
                 await tauri.applyProfile(bandsWithIds, newPreamp, configPath, eqEnabled);
-                setSyncStatus("synced");
-                setError(null);
+                setSyncState({ status: "synced" });
             } catch (e) {
-                setSyncStatus("error");
-                setError(String(e));
+                setSyncState({
+                    status: "error",
+                    message: e instanceof Error ? e.message : "Failed to load profile"
+                });
             } finally {
                 setIsLoading(false);
             }
         },
-        [configPath]
+        [configPath, eqEnabled]
     );
 
     const deleteProfileByName = useCallback(
@@ -273,9 +285,12 @@ export function useEqualizer() {
                     setCurrentProfile(null);
                 }
                 await refreshProfiles();
-                setError(null);
+                setSyncState({ status: "synced" });
             } catch (e) {
-                setError(String(e));
+                setSyncState({
+                    status: "error",
+                    message: e instanceof Error ? e.message : "Failed to delete profile"
+                });
             } finally {
                 setIsLoading(false);
             }
@@ -293,8 +308,7 @@ export function useEqualizer() {
             setBands,
             setPreamp,
             setCurrentProfile,
-            setSyncStatus,
-            setError,
+            setSyncState,
             preamp,
             configPath
         );
@@ -310,8 +324,7 @@ export function useEqualizer() {
         handleImportTxt(
             setBands,
             setPreamp,
-            setSyncStatus,
-            setError
+            setSyncState
         );
     }, []);
 
@@ -321,8 +334,7 @@ export function useEqualizer() {
         profiles,
         currentProfile,
         isLoading,
-        error,
-        syncStatus,
+        syncState,
         configPath,
         eqEnabled,
         setCustomConfigPath,

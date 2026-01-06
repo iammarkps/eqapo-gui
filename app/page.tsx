@@ -29,8 +29,7 @@ export default function Home() {
         profiles,
         currentProfile,
         isLoading,
-        error,
-        syncStatus,
+        syncState,
         configPath,
         eqEnabled,
         setCustomConfigPath,
@@ -95,7 +94,7 @@ export default function Home() {
                                 <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-400 to-pink-500 bg-clip-text text-transparent">
                                     EQAPO GUI
                                 </h1>
-                                <SyncIndicator status={syncStatus} onForceSync={forceSync} />
+                                <SyncIndicator status={syncState.status} onForceSync={forceSync} />
                             </div>
 
                             <div className="flex items-center gap-3">
@@ -160,10 +159,10 @@ export default function Home() {
                 </header>
 
                 {/* Error Display */}
-                {error && (
+                {syncState.status === "error" && (
                     <div className="bg-destructive/15 text-destructive border-l-4 border-destructive p-4 container mx-auto mt-4 rounded-r-lg">
                         <p className="font-medium">Error Occurred</p>
-                        <p className="text-sm opacity-90">{error}</p>
+                        <p className="text-sm opacity-90">{syncState.message}</p>
                     </div>
                 )}
 
